@@ -1,27 +1,46 @@
 import type { Row, Tab } from "@/lib/types";
 
 /**
- * Storage layer with two drivers:
- *  - "sheets": Google Sheets (AttendanceDB) — production, free
- *  - "local":  JSON file .data/db.json — demo/development, auto-seeded
- * The driver is chosen automatically: if GOOGLE_SHEET_ID + service account
- * env vars exist, we use the sheet; otherwise the local demo database.
+ * Storage layer with three drivers (auto-selected):
+ *  - "appsscript": Google Sheet + free Apps Script Web App  ← simplest prod
+ *  - "sheets":     Google Sheet via service-account REST    ← classic prod
+ *  - "local":      JSON file .data/db.json                  ← demo/dev, auto-seeded
+ *
+ * Priority: APPS_SCRIPT_URL+SECRET present → appsscript. Else
+ * GOOGLE_SHEET_ID+client email+key → sheets. Else local demo.
  */
 
+export type Driver = "appsscript" | "sheets" | "local";
+
+export function hasAppsScript(): boolean {
+  return !!(process.env.APPS_SCRIPT_URL && process.env.APPS_SCRIPT_SECRET);
+}
+
+/** True when the app has ANY real backend configured (not demo mode). */
 export function hasGoogleConfig(): boolean {
-  return !!(
+  return hasAppsScript() || !!(
     process.env.GOOGLE_SHEET_ID &&
     process.env.GOOGLE_CLIENT_EMAIL &&
     process.env.GOOGLE_PRIVATE_KEY
   );
 }
 
-export function driverName(): "sheets" | "local" {
-  return hasGoogleConfig() ? "sheets" : "local";
+export function driverName(): Driver {
+  if (hasAppsScript()) return "appsscript";
+  if (process.env.GOOGLE_SHEET_ID && process.env.GOOGLE_CLIENT_EMAIL && process.env.GOOGLE_PRIVATE_KEY) return "sheets";
+  return "local";
 }
 
-/** Serialize mutations (append/update/delete) per process — protects both
- *  the local file and Google Sheets from interleaved writes. */
+export function storageLabel(): string {
+  switch (driverName()) {
+    case "appsscript": return "Google Sheet (Apps Script bridge) ✅";
+    case "sheets": return "Google Sheet (Sheets API) ✅";
+    default: return "local demo DB (.data/db.json)";
+  }
+}
+
+/** Serialize mutations (append/update/delete) per process — protects the
+ *  sheet from interleaved writes (the Apps Script side also holds LockService). */
 let chain: Promise<unknown> = Promise.resolve();
 function tx<T>(fn: () => Promise<T>): Promise<T> {
   const next = chain.then(fn, fn);
@@ -29,8 +48,15 @@ function tx<T>(fn: () => Promise<T>): Promise<T> {
   return next;
 }
 
+async function listRaw(tab: Tab): Promise<Row[]> {
+  const d = driverName();
+  if (d === "appsscript") { const { asList } = await import("./db/appsscript"); return asList(tab); }
+  if (d === "sheets") { const { sheetsList } = await import("./db/sheets"); return sheetsList(tab); }
+  const { localList } = await import("./db/local"); return localList(tab);
+}
+
 export async function list(tab: Tab, pred?: (r: Row) => boolean): Promise<Row[]> {
-  const rows = await (hasGoogleConfig() ? sheetsRows(tab) : localRows(tab));
+  const rows = await listRaw(tab);
   return pred ? rows.filter(pred) : rows;
 }
 
@@ -44,57 +70,28 @@ export async function byId(tab: Tab, id: string): Promise<Row | null> {
 }
 
 export async function insert(tab: Tab, data: Row): Promise<Row> {
-  return tx(async () =>
-    hasGoogleConfig() ? sheetsInsert(tab, data) : localInsert(tab, data)
-  );
+  return tx(async () => {
+    const d = driverName();
+    if (d === "appsscript") { const { asInsert } = await import("./db/appsscript"); return asInsert(tab, data); }
+    if (d === "sheets") { const { sheetsInsert } = await import("./db/sheets"); return sheetsInsert(tab, data); }
+    const { localInsert } = await import("./db/local"); return localInsert(tab, data);
+  });
 }
 
 export async function update(tab: Tab, id: string, patch: Row): Promise<void> {
-  await tx(async () =>
-    hasGoogleConfig() ? sheetsUpdate(tab, id, patch) : localUpdate(tab, id, patch)
-  );
+  await tx(async () => {
+    const d = driverName();
+    if (d === "appsscript") { const { asUpdate } = await import("./db/appsscript"); return asUpdate(tab, id, patch); }
+    if (d === "sheets") { const { sheetsUpdate } = await import("./db/sheets"); return sheetsUpdate(tab, id, patch); }
+    const { localUpdate } = await import("./db/local"); return localUpdate(tab, id, patch);
+  });
 }
 
 export async function remove(tab: Tab, id: string): Promise<void> {
-  await tx(async () =>
-    hasGoogleConfig() ? sheetsRemove(tab, id) : localRemove(tab, id)
-  );
-}
-
-/* ---------------- local driver ---------------- */
-
-async function localRows(tab: Tab): Promise<Row[]> {
-  const { localList } = await import("./db/local");
-  return localList(tab);
-}
-async function localInsert(tab: Tab, data: Row) {
-  const { localInsert: f } = await import("./db/local");
-  return f(tab, data);
-}
-async function localUpdate(tab: Tab, id: string, patch: Row) {
-  const { localUpdate: f } = await import("./db/local");
-  return f(tab, id, patch);
-}
-async function localRemove(tab: Tab, id: string) {
-  const { localRemove: f } = await import("./db/local");
-  return f(tab, id);
-}
-
-/* ---------------- google sheets driver ---------------- */
-
-async function sheetsRows(tab: Tab): Promise<Row[]> {
-  const { sheetsList } = await import("./db/sheets");
-  return sheetsList(tab);
-}
-async function sheetsInsert(tab: Tab, data: Row) {
-  const { sheetsInsert: f } = await import("./db/sheets");
-  return f(tab, data);
-}
-async function sheetsUpdate(tab: Tab, id: string, patch: Row) {
-  const { sheetsUpdate: f } = await import("./db/sheets");
-  return f(tab, id, patch);
-}
-async function sheetsRemove(tab: Tab, id: string) {
-  const { sheetsRemove: f } = await import("./db/sheets");
-  return f(tab, id);
+  await tx(async () => {
+    const d = driverName();
+    if (d === "appsscript") { const { asRemove } = await import("./db/appsscript"); return asRemove(tab, id); }
+    if (d === "sheets") { const { sheetsRemove } = await import("./db/sheets"); return sheetsRemove(tab, id); }
+    const { localRemove } = await import("./db/local"); return localRemove(tab, id);
+  });
 }

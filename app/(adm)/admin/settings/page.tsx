@@ -24,11 +24,19 @@ export default async function AdminSettings() {
       <div className="card text-xs text-slate-600">
         <h3 className="mb-1 text-sm font-bold">🔌 Backend</h3>
         <p>
-          Storage driver: <b>{driverName() === "sheets" ? "Google Sheets (production)" : "Local demo DB"}</b>
+          Storage driver:{" "}
+          <b>
+            {driverName() === "appsscript"
+              ? "Google Sheet — Apps Script bridge (production)"
+              : driverName() === "sheets"
+                ? "Google Sheet — Sheets API service account (production)"
+                : "Local demo DB (.data/db.json)"}
+          </b>
+          {driverName() === "appsscript" && <> · URL <code className="rounded bg-slate-100 px-1">{process.env.APPS_SCRIPT_URL?.slice(0, 46)}…</code></>}
           {driverName() === "sheets" && <> · Sheet ID <code className="rounded bg-slate-100 px-1">{process.env.GOOGLE_SHEET_ID?.slice(0, 24)}…</code></>}
         </p>
         <p className="mt-1 text-slate-400">
-          Google Sheets connect karne ke liye repo ka SETUP.md follow karo (5 steps, ~10 min, free).
+          Naya backend jodna ho to repo ke SETUP.md ke 10-minute guide follow karo — dono options free.
         </p>
       </div>
     </div>

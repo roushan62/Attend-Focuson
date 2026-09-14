@@ -9,8 +9,11 @@ picture, a payroll matrix, and a CSV export — no database bill, ever.
 
 ```
 Worker phone ──(GPS + login)──► Vercel (Next.js, free) ──► Google Sheet "AttendanceDB" (free)
-                                     │
-Admin / HR ◄── same app, extra tabs ─┘   (live site feed, approvals, payroll)
+                                     │                        ▲
+Admin / HR ◄── same app, extra tabs ─┘   (live site feed,     │
+                                  approvals, payroll)   2 free backend options:
+                                                 A) Apps Script Web-App bridge (no keys)
+                                                 B) Service account + Sheets API
 ```
 
 ## Why this design (and the honest limits)
@@ -26,6 +29,7 @@ Admin / HR ◄── same app, extra tabs ─┘   (live site feed, approvals, p
 | Worker app (PWA) | Phone+password login · **current assigned site dashboard** (details, map, team, GPS mark-IN/OUT) · **all company sites** visible; mark at another site = paid “site visit / on duty” after approval · month calendar + history · leave / half-day / travel(on-duty) requests · profile + password · installable, Hinglish helper text |
 | Admin + HR panel | Live **per-site feed for today** (verified / pending / not marked) · Projects CRUD with geofence (centre + radius, "Use my location" capture) · Employee CRUD with site assignment + daily wage · Attendance review showing ~metres + in/out times with one-click status corrections + manual/force mark (with `approved_by` audit) · Approvals queue (late / out-of-radius / site visit / leave / half-day / travel) · **Monthly payroll matrix** (P L H O A chips) + CSV export (Excel-ready) · Company settings (cutoff, default radius, timezone) |
 | Rules engine | in radius + before cutoff → **present** (auto) · in radius + late → `late_pending` + reason request · outside radius → `outside_pending` + reason · other site → `visit_pending` · admin approve → paid `late` / `on_duty` · reject → `absent` · approved leave/half-day/travel writes the calendar · **payable = P+L+O+½H × daily wage** |
+| Backends | **Three drivers, auto-selected by env vars**: `appsscript` (sheet + free Apps Script Web App — zero Cloud Console, zero keys), `sheets` (service-account REST), `local` (JSON demo DB with seed). Same 5 tabs, same protocol, one-line env switch |
 | Security | bcrypt hashes only · HMAC-signed httpOnly session cookie, 30-day · per-company data isolation (`company_id` on every query) · geofence math done **server-side** (client can't fake distance) · Origin check on writes |
 | Multi-company | Companies are just rows — first admin signs up at `/register`, each company sees only its own data, all stored in the same 5 sheet tabs. One Sheet can host many small companies, or give each its own Sheet ID deployment. |
 
@@ -40,8 +44,12 @@ npm run dev                  # http://localhost:3000
 Demo mode auto-seeds a full company (sites near real Mumbai/Delhi coordinates, 12
 workers, a month of history, 2 pending approvals) — logins are shown on `/login`.
 
-**Full production guide (Google Cloud service account → Sheet → Vercel, 10 steps,
-testing checklist, limits):** see [SETUP.md](./SETUP.md).
+**Full production guide — two free backends (A: Apps Script ~10 min, no keys;
+B: service account + Sheet) → Vercel, testing checklist, honest limits:**
+see [SETUP.md](./SETUP.md). The Apps Script backend lives in
+[`google-apps-script/Code.gs`](./google-apps-script/Code.gs) — paste into
+Extensions ▸ Apps Script, run `setupDatabase()`, deploy as Web App, done.
+`scripts/mock-appsscript.mjs` lets you rehearse it locally before deploying.
 
 ## Layout
 
@@ -53,11 +61,13 @@ app/
   api/auth/*  api/attendance/*  api/requests/*  api/employees  api/projects  api/company  api/reports/csv
 lib/
   db.ts           storage switch (Google Sheets ⇄ local demo)
-  db/sheets.ts    Google Sheets driver   db/local.ts  JSON demo driver
+  db/sheets.ts    Sheets-API driver  db/appsscript.ts Apps Script driver  db/local.ts demo driver
   attendance.ts   the rule engine        domain.ts   queries + payroll
   auth.ts crypto.ts time.ts distance.ts ids.ts seed.ts
 components/       Shell (nav) · MarkPanel (GPS buttons) · forms (client islands)
-public/           sw.js, icons (PWA) · scripts/create-sheet.mjs   (makes the DB sheet for you)
+public/           sw.js, icons (PWA)
+google-apps-script/Code.gs  ← the sheet-side backend (CRUD + locks + setup + digest)
+scripts/          create-sheet.mjs (Option B helper) · mock-appsscript.mjs (local rehearsal)
 ```
 
 ## Market features I folded in (inspiration, not bloat)

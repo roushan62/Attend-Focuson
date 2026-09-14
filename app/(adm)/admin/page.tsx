@@ -2,6 +2,7 @@ import Link from "next/link";
 import { requireSession } from "@/lib/auth";
 import { companyOf, employeesOf, projectsOf, attendanceOn } from "@/lib/domain";
 import { list } from "@/lib/db";
+import { storageLabel } from "@/lib/db";
 import { todayStr } from "@/lib/time";
 
 export const dynamic = "force-dynamic";
@@ -104,7 +105,7 @@ export default async function AdminHome() {
       </div>
 
       <p className="px-1 text-center text-[11px] text-slate-400">
-        Data store: {process.env.GOOGLE_SHEET_ID ? "Google Sheets ✅ (AttendanceDB)" : "local demo DB (.data/db.json)"} · cutoff {company.cutoff_time} · {tz}
+        Data store: {storageLabel()} · cutoff {company.cutoff_time} · {tz}
       </p>
     </div>
   );
