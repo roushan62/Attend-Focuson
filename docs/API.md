@@ -27,7 +27,7 @@ Errors carry `error:{code, message}` with HTTP-style codes (400/401/403/404/409/
 | `signupStatus` | `actionSignupStatus` | none | — | lookup |
 | `sendOtp` | `actionSendOtp` | none | — | otp |
 | `sendSignupOtp` | `actionSendSignupOtp` | none | — | otp |
-| `verifyOtp` | `actionVerifyOtp` | none | — | otp |
+| `verifyOtp` | `actionVerifyOtp` | none | — | lookup |
 | `login` | `actionLogin` | none | — | login |
 | `loginWithOtp` | `actionLoginWithOtp` | none | — | login |
 | `ownerLogin` | `actionOwnerLogin` | none | — | login |
@@ -43,13 +43,11 @@ Errors carry `error:{code, message}` with HTTP-style codes (400/401/403/404/409/
 | `rejectCompany` | `actionRejectCompany` | owner | — | — |
 | `listCompanies` | `actionListCompanies` | owner | — | — |
 | `setCompanyStatus` | `actionSetCompanyStatus` | owner | — | — |
-| `openCompanySheet` | `actionOpenCompanySheet` | owner | — | — |
 | `platformAuditLog` | `actionPlatformAuditLog` | owner | — | — |
 | `installTriggers` | `actionInstallTriggers` | owner | — | — |
 | `removeTriggers` | `actionRemoveTriggers` | owner | — | — |
 | `setScriptProperty` | `actionSetScriptProperty` | owner | — | — |
 | `listScriptProperties` | `actionListScriptProperties` | owner | — | — |
-| `seedDemoCompany` | `actionSeedDemoCompany` | owner | — | — |
 
 ## session / profile
 
@@ -120,7 +118,7 @@ Errors carry `error:{code, message}` with HTTP-style codes (400/401/403/404/409/
 | `reviewAttendance` | `actionReviewAttendance` | staff | reviewAttendance | — |
 | `manualMark` | `actionManualMark` | staff | reviewAttendance | — |
 | `requestRegularization` | `actionRequestRegularization` | user | — | — |
-| `listRegularizations` | `actionListRegularizations` | staff | approveRegularization | — |
+| `listRegularizations` | `actionListRegularizations` | user | — (staff: queue · worker: own) | — |
 | `decideRegularization` | `actionDecideRegularization` | staff | approveRegularization | — |
 | `todayDashboard` | `actionTodayDashboard` | staff | — | — |
 | `liveMap` | `actionLiveMap` | staff | — | — |
@@ -184,4 +182,5 @@ Errors carry `error:{code, message}` with HTTP-style codes (400/401/403/404/409/
 | `listAuditLog` | `actionListAuditLog` | staff | viewAuditLog | — |
 
 
-Total actions: **101**.
+Total actions: **99** — this file mirrors `ACTIONS` in `backend/04_Router.gs`;
+`npm run verify` fails if the two ever disagree.

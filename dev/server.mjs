@@ -4,8 +4,9 @@
  *
  *  • Serves frontend/ as a static site (GitHub-Pages-compatible relative paths)
  *  • Proxies /api  →  the REAL backend/*.gs code running on the GAS polyfills
- *  • Auto-bootstraps a Platform Master Sheet and seeds a demo company on
- *    first run so the preview is usable immediately
+ *  • Auto-bootstraps an EMPTY Platform Master Sheet on first run (no demo or
+ *    sample data exists in this project — create a company through the
+ *    signup page + owner approval exactly like a real customer would)
  *  • /dev/* endpoints expose the mock outbox, logs and a data reset
  *
  *  Run:  npm run dev      (or: node dev/server.mjs)
@@ -49,29 +50,17 @@ function bootstrapIfNeeded() {
   if (!res.success) throw new Error('bootstrap failed: ' + JSON.stringify(res.error));
   const ownerKey = res.data.ownerKey;
   const ownerToken = app.call('ownerLogin', { ownerKey }).data.token;
-  let demo = null;
-  try {
-    demo = app.call('seedDemoCompany', { password: 'Demo@1234' }, { token: ownerToken }).data;
-  } catch (e) {
-    log('demo seed failed:', e.message);
-  }
   app.call('installTriggers', {}, { token: ownerToken });
-  bootInfo = { ownerKey, masterSheetId: res.data.masterSheetId, demo };
+  bootInfo = { ownerKey, masterSheetId: res.data.masterSheetId };
   return bootInfo;
 }
 
 const boot = bootstrapIfNeeded();
 if (boot && boot.ownerKey) {
-  console.log('\n\x1b[1m\x1b[36m  SiteTrack dev backend ready\x1b[0m');
+  console.log('\n\x1b[1m\x1b[36m  SiteTrack dev backend ready — empty platform (no demo data)\x1b[0m');
   console.log('  \x1b[2mplatform master sheet:\x1b[0m', boot.masterSheetId);
   console.log('  \x1b[2mplatform owner key:   \x1b[0m', boot.ownerKey);
-  if (boot.demo) {
-    console.log('  \x1b[2mdemo company:         \x1b[0m', boot.demo.companyName, `(${boot.demo.companyId})`);
-    console.log('  \x1b[2mdemo company sheet:   \x1b[0m', boot.demo.sheetId);
-    (boot.demo.credentials || []).forEach((c) => {
-      console.log(`   \x1b[33m${c.role.padEnd(32)}\x1b[0m ${String(c.userId).padEnd(14)} ${String(c.mobile || c.email || '').padEnd(26)} pw: ${c.password}`);
-    });
-  }
+  console.log('  \x1b[2mstart here:           \x1b[0m /signup.html  → then approve at /owner.html with the key above');
   console.log('');
 }
 

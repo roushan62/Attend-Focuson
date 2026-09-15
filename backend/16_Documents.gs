@@ -158,10 +158,17 @@ function actionUpdateDocument(payload, ctx) {
     patch.AlertSentAt = '';
   }
   if (payload.status !== undefined) {
-    patch.Status = pickOne_(payload.status, ['Valid', 'ExpiringSoon', 'Expired', 'Rejected'], String(row.Status));
+    // An unrecognised value is a client bug — say so instead of quietly keeping the old status.
+    var nextStatus = pickOne_(payload.status, ['Valid', 'ExpiringSoon', 'Expired', 'Rejected'], '');
+    assert_(nextStatus, 'status must be Valid, ExpiringSoon, Expired or Rejected', 400);
+    patch.Status = nextStatus;
   }
   if (payload.notes !== undefined) patch.Notes = str_(payload.notes, 300);
-  if (payload.docType !== undefined) patch.DocType = pickOne_(payload.docType, DOC_TYPES, String(row.DocType));
+  if (payload.docType !== undefined) {
+    var nextType = pickOne_(payload.docType, DOC_TYPES, '');
+    assert_(nextType, 'Unknown document type', 400);
+    patch.DocType = nextType;
+  }
   if (payload.expiryAlertDays !== undefined) patch.ExpiryAlertDays = String(num_(payload.expiryAlertDays, 15));
   assert_(Object.keys(patch).length, 'Nothing to update', 400);
   var updated = updateRecord_(ss, 'Documents', 'DocID', row.DocID, patch);
@@ -177,5 +184,5 @@ function actionDeleteDocument(payload, ctx) {
   if (row.FileId) trashDriveFile_(row.FileId);
   deleteRecord_(ss, 'Documents', 'DocID', row.DocID);
   audit_(ss, ctx, 'DELETE_DOCUMENT', 'Documents', row.DocID, { type: row.DocType, user: row.UserID }, 'OK');
-  return { docId: row.DocId || row.DocID, deleted: true };
+  return { docId: row.DocID, deleted: true };
 }

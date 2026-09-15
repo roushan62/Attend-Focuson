@@ -360,6 +360,32 @@ async function main() {
   const afterDevice = api(app, 'login', { identifier: employees[0].mobile, password: employees[0].password, deviceFingerprint: 'fp-someone-elses-phone' });
   check('new device now trusted', afterDevice.ok && afterDevice.data.device.ok === true, afterDevice.data && afterDevice.data.device.status);
 
+  // Employees -> Devices screen: block a phone, let the worker see it, give it back
+  const registry = api(app, 'listDeviceRegistry', {}, { token: saToken2 });
+  const devRow = (registry.data.devices || []).find((d) => d.userId === employees[0].userId);
+  check('registry lists the bound device with a masked fingerprint',
+    registry.ok && !!devRow && devRow.fingerprint !== 'fp-someone-elses-phone' && String(devRow.fingerprint).length < 24,
+    devRow ? devRow.label + ' -> ' + devRow.fingerprint : 'no row');
+  const blockedDev = api(app, 'blockDevice', { deviceId: devRow.deviceId, blocked: true, reason: 'Phone reported lost at the gate' }, { token: saToken2 });
+  check('device blocked from the registry', blockedDev.ok && blockedDev.data.status === 'Blocked');
+  const meBlocked = api(app, 'me', {}, { token: empToken });
+  check('the block is visible on the worker profile',
+    meBlocked.ok && String(meBlocked.data.user.DeviceStatus || meBlocked.data.user.deviceStatus) === 'Blocked',
+    meBlocked.data && String(meBlocked.data.user.DeviceStatus || meBlocked.data.user.deviceStatus));
+  const unblocked = api(app, 'blockDevice', { deviceId: devRow.deviceId, blocked: false, reason: 'Phone found again' }, { token: saToken2 });
+  check('device unblocked', unblocked.ok && unblocked.data.status === 'Active');
+
+  // Worker home tab: today card
+  const todayMine = api(app, 'myAttendanceToday', {}, { token: empToken });
+  check('myAttendanceToday returns the day with its marks and rules', todayMine.ok && todayMine.data.date &&
+    todayMine.data.marks.length >= 1 && !!todayMine.data.settings.windowStart,
+    todayMine.data && (todayMine.data.date + ' marks=' + todayMine.data.marks.length));
+  const teamAsWorker = api(app, 'projectTeam', { projectId: p1 }, { token: empToken });
+  check('projectTeam answers for a worker who is on that site', teamAsWorker.ok && Array.isArray(teamAsWorker.data.members),
+    teamAsWorker.data && ('members=' + teamAsWorker.data.members.length));
+  api(app, 'projectTeam', { projectId: 'PRJ-NOPE' }, { token: empToken, expectError: 403 });
+  api(app, 'projectTeam', { projectId: 'PRJ-NOPE' }, { token: saToken2, expectError: 404 });
+
   // QR fallback
   const qr = api(app, 'projectQrCode', { projectId: p1 }, { token: saToken2 });
   check('site QR payload issued', qr.ok && qr.data.payload.startsWith('SITETRACK|'), qr.data && qr.data.payload);
@@ -415,6 +441,15 @@ async function main() {
   const decideReg = api(app, 'decideRegularization', { requestId: regs.data.requests[0].requestId, decision: 'approve', note: 'Verified with supervisor' }, { token: saToken2 });
   check('regularization approved and written', decideReg.ok && decideReg.data.decision === 'Approved');
 
+  // the requester can follow their own correction (the worker app shows this list)
+  const myRegs = api(app, 'listRegularizations', {}, { token: empToken });
+  check('worker sees their own regularization history, decided ones included', myRegs.ok &&
+    myRegs.data.count >= 1 && myRegs.data.requests.every((r) => String(r.userId) === String(employees[0].userId)),
+    myRegs.data && ('count=' + myRegs.data.count + ' statuses=' + myRegs.data.requests.map((r) => r.status).join('/')));
+  const someoneElses = api(app, 'listRegularizations', { status: 'All' }, { token: emp2Token });
+  check("another worker cannot read the company's queue", someoneElses.ok &&
+    someoneElses.data.requests.every((r) => String(r.userId) === String(employees[1].userId)));
+
   const dash = api(app, 'todayDashboard', {}, { token: saToken2 });
   check('live dashboard computed', dash.ok && dash.data.totals.expected >= 5,
     dash.data && `expected=${dash.data.totals.expected} present=${dash.data.totals.present} flagged=${dash.data.totals.flagged} %=${dash.data.attendancePercentage}`);
@@ -437,6 +472,18 @@ async function main() {
   api(app, 'requestLeave', {
     fromDate: istDate(2), toDate: istDate(3), type: 'Sick', reason: 'Overlap test'
   }, { token: empToken, expectError: 409 });
+
+  const ownLeave = api(app, 'requestLeave', {
+    fromDate: istDate(6), toDate: istDate(6), type: 'Sick', reason: 'Doctor appointment - re-booking it'
+  }, { token: emp2Token });
+  check('a second worker filed a leave', ownLeave.ok && ownLeave.data.status === 'Pending');
+  api(app, 'cancelLeave', { leaveId: ownLeave.data.leaveId }, { token: empToken, expectError: 403 });
+  const cancelled = api(app, 'cancelLeave', { leaveId: ownLeave.data.leaveId }, { token: emp2Token });
+  check('a worker can withdraw their own pending leave', cancelled.ok && cancelled.data.status === 'Cancelled');
+  api(app, 'cancelLeave', { leaveId: ownLeave.data.leaveId }, { token: emp2Token, expectError: 409 });
+  const leftQueue = api(app, 'listLeaves', { status: 'Pending' }, { token: emp2Token });
+  check('the cancelled request left the worker queue', leftQueue.ok &&
+    !leftQueue.data.leaves.some((l) => l.leaveId === ownLeave.data.leaveId));
 
   const expense = api(app, 'requestExpense', {
     projectId: p1, amount: 1450, category: 'Travel', description: 'Taxi fare for client meeting (2 trips)',
@@ -498,6 +545,15 @@ async function main() {
     { token: emp2Token, expectError: 403 });
   check('employees cannot create vendors', !unauthorisedVendor.ok);
 
+  // Vendors screen: disable, prove it bites, re-enable
+  api(app, 'setVendorStatus', { vendorId, status: 'Inactive' }, { token: saToken2 });
+  const offList = api(app, 'listVendors', {}, { token: saToken2 });
+  check('vendor marked inactive', offList.ok && offList.data.vendors.some((v) => v.vendorId === vendorId && v.status === 'Inactive'));
+  api(app, 'addVendorWorkerEntry', { vendorId, projectId: p1, count: 3 }, { token: empToken, expectError: 400 });
+  api(app, 'setVendorStatus', { vendorId, status: 'Active' }, { token: saToken2 });
+  const backOn = api(app, 'addVendorWorkerEntry', { vendorId, projectId: p1, count: 2, designation: 'Helper' }, { token: empToken });
+  check('re-enabled vendor accepts headcount again', backOn.ok && backOn.data.headcount === 2);
+
   // ---- Phase 6: reports, payroll, exports --------------------------------
   head('Phase 6 — Reports, payroll wage sheet & exports');
   for (const type of ['monthlyAttendance', 'dailyAttendance', 'leaveSummary', 'expenseSummary', 'vendorManpower', 'flagged', 'projectSummary']) {
@@ -516,6 +572,25 @@ async function main() {
   check('payroll row has days + wages + expenses', payrollRow && payrollRow.payableDays >= 0 && payrollRow.perDayRate > 0,
     payrollRow && `payable=${payrollRow.payableDays} rate=${payrollRow.perDayRate} net=${payrollRow.netPayable}`);
   check('vendor labour folded into payroll', payroll.data.vendorLabour && payroll.data.vendorLabour.totalManDays >= 14);
+
+  // Settings that drive the money: the holiday flag and the salary divisor must be honoured.
+  api(app, 'saveSettings', { settings: { paidHolidays: 'N' } }, { token: saToken2 });
+  const payrollNoPaidHolidays = api(app, 'generatePayrollSheet', { month: istMonth() }, { token: saToken2 });
+  const holidayBefore = (payrollRow && payrollRow.holidayDays) || 0;
+  const rowAfter = payrollNoPaidHolidays.data.employees.find((e) => e.userId === employees[0].userId);
+  check('unpaid holidays are excluded from payable days',
+    payrollNoPaidHolidays.ok && rowAfter && rowAfter.holidayDays === holidayBefore && rowAfter.payableDays <= payrollRow.payableDays,
+    rowAfter && `payable ${payrollRow.payableDays} → ${rowAfter.payableDays}`);
+  api(app, 'saveSettings', { settings: { paidHolidays: 'Y', payrollDaysBasis: '30' } }, { token: saToken2 });
+  const payrollBasis30 = api(app, 'generatePayrollSheet', { month: istMonth() }, { token: saToken2 });
+  const salRow = payrollBasis30.data.employees.find((e) => e.userId === adminId);
+  const salRowBefore = payroll.data.employees.find((e) => e.userId === adminId);
+  check('payrollDaysBasis changes the monthly per-day rate', payrollBasis30.ok && salRow &&
+    Math.abs(salRow.perDayRate - Math.round((85000 / 30) * 100) / 100) <= 0.02 &&
+    salRowBefore && salRowBefore.perDayRate > salRow.perDayRate,
+    salRow && `rate ${salRowBefore && salRowBefore.perDayRate} → ${salRow.perDayRate} (85000 ÷ 30 = ${Math.round((85000 / 30) * 100) / 100})`);
+  api(app, 'saveSettings', { settings: { payrollDaysBasis: 99 } }, { token: saToken2, expectError: 400 });
+  api(app, 'saveSettings', { settings: { payrollDaysBasis: '26' } }, { token: saToken2 });
 
   const xlsx = api(app, 'exportReport', { type: 'payroll', format: 'xlsx', month: istMonth() }, { token: saToken2 });
   check('export → xlsx', xlsx.ok && xlsx.data.bytes > 0 && !!xlsx.data.dataUrl, xlsx.data && `${xlsx.data.bytes} bytes`);
@@ -578,6 +653,18 @@ async function main() {
   check('monthly summary for the employee', summary.ok && summary.data.summary.days.length >= 28,
     summary.data && `days=${summary.data.summary.days.length} present=${summary.data.summary.totals.present}`);
 
+  // Profile screen: "Edit my details" (only the fields that form owns)
+  const profile = api(app, 'updateMyProfile', {
+    designation: 'Senior Supervisor', emergencyContact: '+91 98200 11223', weeklyOff: '1'
+  }, { token: empToken });
+  check('own details updated', profile.ok && profile.data.user.Designation === 'Senior Supervisor' &&
+    String(profile.data.user.WeeklyOff) === '1', profile.data && profile.data.user.Designation);
+  api(app, 'updateMyProfile', { role: 'SuperAdmin', salaryType: 'Monthly' }, { token: empToken, expectError: 400 });
+  api(app, 'updateMyProfile', { emergencyContact: 'call my brother' }, { token: empToken, expectError: 400 });
+  const afterProfile = api(app, 'me', {}, { token: empToken });
+  check('role and pay fields untouched by a self-service edit', afterProfile.ok && afterProfile.data.user.Role === 'Employee',
+    afterProfile.data && afterProfile.data.user.Role);
+
   const notifs = api(app, 'myNotifications', {}, { token: empToken });
   check('notification inbox populated', notifs.ok && notifs.data.count >= 1, notifs.data && `unread=${notifs.data.unread}`);
 
@@ -589,8 +676,19 @@ async function main() {
   check('document uploaded with expiry', docUp.ok && docUp.data.document.status === 'ExpiringSoon',
     docUp.data && docUp.data.document.status);
 
+  // Documents screen: the Edit button (expiry / alert window / notes / status)
+  const docEdit = api(app, 'updateDocument', {
+    docId: docUp.data.document.docId, expiryDate: istDate(200), expiryAlertDays: 30,
+    notes: 'Renewed for the next financial year', status: 'Valid'
+  }, { token: saToken2 });
+  check('document edit recomputes the status', docEdit.ok && docEdit.data.document.status === 'Valid' &&
+    /Renewed/.test(docEdit.data.document.notes || ''), docEdit.data && docEdit.data.document.status);
+  api(app, 'updateDocument', { docId: docUp.data.document.docId }, { token: saToken2, expectError: 400 });
+  api(app, 'updateDocument', { docId: docUp.data.document.docId, expiryDate: '01/01/2027' }, { token: saToken2, expectError: 400 });
+  api(app, 'updateDocument', { docId: docUp.data.document.docId, status: 'Lost' }, { token: saToken2, expectError: 400 });
+
   // ---- Phase 8: triggers & demo tenant -----------------------------------
-  head('Phase 8 — Scheduled jobs, weather flag & demo tenant');
+  head('Phase 8 — Scheduled jobs & weather flag');
   const expiry = app.invoke('documentExpiryCheck');
   check('documentExpiryCheck ran across companies', expiry && expiry.processed >= 1, JSON.stringify(expiry).slice(0, 120));
   const close = app.invoke('dailyAttendanceClose');
@@ -609,19 +707,110 @@ async function main() {
   const weatherCheck = api(app, 'checkSiteWeather', {}, { token: saToken2 });
   check('weather check returns site conditions', weatherCheck.ok && weatherCheck.data.sites.length >= 2);
 
-  const demo = api(app, 'seedDemoCompany', { password: 'Demo@1234' }, { token: ownerToken });
-  check('demo tenant seeded', demo.ok && demo.data.seeded.attendance > 100,
-    demo.data && JSON.stringify(demo.data.seeded));
-  const demoLogin = api(app, 'login', { identifier: '+919800000000', password: 'Demo@1234' });
-  check('demo super admin can sign in', demoLogin.ok && demoLogin.data.company.companyName === 'Demo Fitout Pvt Ltd');
-  const demoDash = api(app, 'todayDashboard', {}, { token: demoLogin.data.token });
-  check('demo dashboard has live data', demoDash.ok && demoDash.data.totals.expected >= 5,
-    demoDash.data && `projects=${demoDash.data.projects.length} expected=${demoDash.data.totals.expected}`);
-  const demoEmp = api(app, 'login', { identifier: '+919800000011', password: 'Demo@1234', deviceFingerprint: 'fp-demo-suresh' });
-  check('demo employee can sign in', demoEmp.ok && demoEmp.data.assignments.length >= 1);
-  const demoPayroll = api(app, 'generatePayrollSheet', { month: istMonth() }, { token: demoLogin.data.token });
-  check('demo payroll sheet computed', demoPayroll.ok && demoPayroll.data.employees.length >= 5,
-    demoPayroll.data && `net=${demoPayroll.data.totals.netPayable}`);
+  // ---- Phase 8b: a second tenant, onboarded exactly like a real customer --
+  //  No seeding anywhere in this project: the only way a company exists is the
+  //  public signup → OTP → owner approval flow, so this phase doubles as the
+  //  "zero demo data" guard and the multi-tenancy isolation proof.
+  head('Phase 8b — Second company through the public flow (zero demo data)');
+
+  const otp2 = api(app, 'sendSignupOtp', { mobile: '+919822200002', email: 'founder@buildwell.example' });
+  const code2 = otp2.data && otp2.data.devCode;
+  check('second signup OTP issued', otp2.ok && /^\d{6}$/.test(code2 || ''), code2);
+
+  api(app, 'verifyOtp', { mobile: '+919822200002', otp: '000000' }, { expectError: 400 });
+  const verify2 = api(app, 'verifyOtp', { mobile: '+919822200002', otp: code2 });
+  check('verifyOtp confirms the code before the form is submitted',
+    verify2.ok && verify2.data.verified === true, verify2.data && verify2.data.mobile);
+
+  const reg2 = api(app, 'registerCompany', {
+    companyName: 'BuildWell Contractors', gst: '27AABCB9876F1Z2',
+    address: '4 Industrial Estate, Chembur, Mumbai 400071',
+    contactPerson: 'Nikhil Rao', designation: 'Partner',
+    email: 'founder@buildwell.example', mobile: '+919822200002',
+    industryType: 'Civil Infrastructure', otp: code2
+  });
+  check('second company registered (pending)', reg2.ok && reg2.data.status === 'Pending',
+    reg2.data && reg2.data.requestId);
+
+  const appr2 = api(app, 'approveCompany',
+    { requestId: reg2.data.requestId, reviewNote: 'Tenancy proof' }, { token: ownerToken });
+  check('second company approved and provisioned', appr2.ok && appr2.data.tabsCreated >= 17,
+    appr2.data && `${appr2.data.companyId} / ${appr2.data.tabsCreated} tabs`);
+  const co2 = appr2.data.companyId;
+  const co2User = appr2.data.superAdminUserId;
+  const co2Pass = appr2.data.tempPassword;
+
+  const sa2 = api(app, 'login', {
+    identifier: co2User, password: co2Pass, companyId: co2, deviceFingerprint: 'fp-buildwell-desk-01'
+  });
+  check('new tenant super admin signs in', sa2.ok && sa2.data.mustChangePassword === true);
+  check('new tenant company resolved', sa2.data && sa2.data.company.companyName === 'BuildWell Contractors',
+    sa2.data && sa2.data.company.companyId);
+  const co2Token = sa2.data.token;
+
+  const dash2 = api(app, 'todayDashboard', {}, { token: co2Token });
+  check('new tenant is empty — nothing was seeded',
+    dash2.ok && dash2.data.projects.length === 0 && Number(dash2.data.totals.expected) === 0,
+    dash2.data && `projects=${dash2.data.projects.length} expected=${dash2.data.totals.expected}`);
+  const proj2b = api(app, 'listProjects', {}, { token: co2Token });
+  check('tenant isolation: no projects leak across companies', proj2b.ok && proj2b.data.count === 0);
+  const users2b = api(app, 'listUsers', {}, { token: co2Token });
+  check('tenant isolation: only the new super admin exists',
+    users2b.ok && users2b.data.count === 1 && String(users2b.data.users[0].UserID) === String(co2User),
+    users2b.data && `count=${users2b.data.count}`);
+  const payroll2b0 = api(app, 'generatePayrollSheet', { month: istMonth() }, { token: co2Token });
+  check('payroll of an empty tenant computes to zero',
+    payroll2b0.ok && payroll2b0.data.employees.length === 0 && Number(payroll2b0.data.totals.netPayable) === 0,
+    payroll2b0.data && JSON.stringify(payroll2b0.data.totals));
+
+  // ...and now the new tenant goes live purely through the API.
+  const wiz2 = api(app, 'completeSetupWizard', {
+    companyName: 'BuildWell Contractors',
+    companyAddress: '4 Industrial Estate, Chembur, Mumbai 400071, Maharashtra, India',
+    gst: '27AABCB9876F1Z2', industryType: 'Civil Infrastructure',
+    defaultGeofenceRadius: 150, requireSelfie: true, requireDeviceBinding: true,
+    attendanceWindowStart: istNow(-180), attendanceWindowEnd: istNow(120), lateGraceMinutes: 15,
+    outWindowStart: istNow(60), outWindowEnd: istNow(480),
+    workingDays: '1,2,3,4,5,6', weeklyOff: '0', timezone: 'Asia/Kolkata', holidays: []
+  }, { token: co2Token });
+  check('new tenant completes the setup wizard', wiz2.ok && wiz2.data.setupCompleted === true);
+
+  const proj2c = api(app, 'createProject', {
+    name: 'Chembur Depot Shed', clientName: 'Metro Logistics', clientContact: '+919820055112',
+    lat: 19.0522, lng: 72.9005, geofenceRadius: 150, startDate: istDate(-5), endDate: istDate(120),
+    address: '4 Industrial Estate, Chembur, Mumbai 400071', codePrefix: 'BW'
+  }, { token: co2Token });
+  check('new tenant creates its first project', proj2c.ok && /^PRJ-/.test(proj2c.data.projectId),
+    proj2c.data && proj2c.data.project.projectCode);
+  const co2Project = proj2c.data.projectId;
+
+  const emp2c = api(app, 'createUser', {
+    name: 'Ganesh Jadhav', role: 'Employee', mobile: '+919822200201',
+    designation: 'Mason', salaryType: 'Daily', dailyWage: 820,
+    roleOnSite: 'Mason', projectId: co2Project, weeklyOff: '0'
+  }, { token: co2Token });
+  check('new tenant creates its first worker', emp2c.ok && emp2c.data.role === 'Employee',
+    emp2c.data && emp2c.data.userId);
+
+  const emp2cLogin = api(app, 'login', {
+    identifier: '+919822200201', password: emp2c.data.tempPassword,
+    deviceFingerprint: 'fp-buildwell-ganesh-01', companyId: co2
+  });
+  const emp2cToken = emp2cLogin.data.token;
+  const mark2c = api(app, 'markAttendance', {
+    projectId: co2Project, lat: 19.05225, lng: 72.90055, accuracy: 10,
+    selfieBase64: 'data:image/png;base64,' + TINY_PNG, deviceFingerprint: 'fp-buildwell-ganesh-01'
+  }, { token: emp2cToken });
+  check('worker marks attendance in the new tenant', mark2c.ok && mark2c.data.status === 'Present',
+    mark2c.data && `distance=${mark2c.data.distance}m`);
+
+  const dash2b = api(app, 'todayDashboard', {}, { token: co2Token });
+  check('new tenant dashboard now reports real data', dash2b.ok && dash2b.data.totals.present === 1,
+    dash2b.data && `present=${dash2b.data.totals.present}`);
+  const payroll2b = api(app, 'generatePayrollSheet', { month: istMonth() }, { token: co2Token });
+  check('payroll follows the tenant own data only',
+    payroll2b.ok && payroll2b.data.employees.length === 1 && Number(payroll2b.data.totals.netPayable) > 0,
+    payroll2b.data && `net=${payroll2b.data.totals.netPayable}`);
 
   const ownerStats = api(app, 'ownerStats', {}, { token: ownerToken });
   check('platform owner stats', ownerStats.ok && ownerStats.data.totalCompanies >= 2,
@@ -632,6 +821,17 @@ async function main() {
   api(app, 'setCompanyStatus', { companyId, status: 'Active' }, { token: ownerToken });
   const revived = api(app, 'login', { identifier: superAdminId, password: 'Acme@2026x', companyId });
   check('company reinstated', revived.ok);
+
+  // Projects screen: the status picker accepts only the three documented values
+  const hold = api(app, 'setProjectStatus', { projectId: p1, status: 'OnHold' }, { token: saToken2 });
+  check('project put on hold', hold.ok && hold.data.status === 'OnHold');
+  api(app, 'setProjectStatus', { projectId: p1, status: 'Closed' }, { token: saToken2, expectError: 400 });
+  const reopened = api(app, 'setProjectStatus', { projectId: p1, status: 'Active' }, { token: saToken2 });
+  check('project reactivated for marking', reopened.ok && reopened.data.project.status === 'Active');
+  const teamToday = api(app, 'projectTeam', { projectId: p1 }, { token: saToken2 });
+  check('on-site-today roll-up agrees with its member list', teamToday.ok &&
+    teamToday.data.members.length === teamToday.data.today.total && teamToday.data.today.percentage <= 100,
+    teamToday.data && (teamToday.data.today.present + '/' + teamToday.data.today.total + ' = ' + teamToday.data.today.percentage + '%'));
 
   const health = api(app, 'health');
   check('health check green', health.ok && health.data.ok === true, health.data && JSON.stringify(health.data.checks.map((x) => x.name + ':' + x.ok)));

@@ -54,17 +54,6 @@ function findCompany_(companyId) {
   return null;
 }
 
-/** Resolve + open a company spreadsheet, throwing if unknown/suspended. */
-function companyContext_(companyId, allowSuspended) {
-  var co = findCompany_(companyId);
-  if (!co) throw new ApiError_('Company not found: ' + companyId, 404);
-  if (!allowSuspended && String(co.Status) === 'Suspended') {
-    throw new ApiError_('This company account is suspended. Contact the platform administrator.', 403);
-  }
-  co.__ss = companySpreadsheetById_(co.SheetID);
-  return co;
-}
-
 function touchCompanyActive_(companyId) {
   try {
     updateRecord_(masterSpreadsheet_(), 'CompanyRegistry', 'CompanyID', companyId, {

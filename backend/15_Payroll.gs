@@ -45,7 +45,9 @@ function payrollCompute_(payload, ctx) {
   var pmap = projectMap_(ss);
 
   var overtimeRate = num_(settings.overtimeRate, 1.5);
-  var paidHolidays = num_(settings.paidHolidays, 1);
+  // Stored as Y/N (see the settings form): only an explicit 'N' makes holidays unpaid.
+  var paidHolidays = String(settings.paidHolidays === undefined || settings.paidHolidays === '' ? 'Y' : settings.paidHolidays)
+    .toUpperCase() === 'N' ? 0 : 1;
   var halfDayFactor = 0.5;
 
   var rows = sel.users.filter(function (u) { return String(u.Role) !== ROLES.SUPER_ADMIN; }).map(function (u) {

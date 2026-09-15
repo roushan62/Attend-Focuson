@@ -21,7 +21,7 @@ var ACTIONS = {
   signupStatus: { fn: 'actionSignupStatus', auth: 'none', rate: 'lookup' },
   sendOtp: { fn: 'actionSendOtp', auth: 'none', rate: 'otp' },
   sendSignupOtp: { fn: 'actionSendSignupOtp', auth: 'none', rate: 'otp' },
-  verifyOtp: { fn: 'actionVerifyOtp', auth: 'none', rate: 'otp' },
+  verifyOtp: { fn: 'actionVerifyOtp', auth: 'none', rate: 'lookup' },
   login: { fn: 'actionLogin', auth: 'none', rate: 'login' },
   loginWithOtp: { fn: 'actionLoginWithOtp', auth: 'none', rate: 'login' },
   ownerLogin: { fn: 'actionOwnerLogin', auth: 'none', rate: 'login' },
@@ -34,13 +34,11 @@ var ACTIONS = {
   rejectCompany: { fn: 'actionRejectCompany', auth: 'owner' },
   listCompanies: { fn: 'actionListCompanies', auth: 'owner' },
   setCompanyStatus: { fn: 'actionSetCompanyStatus', auth: 'owner' },
-  openCompanySheet: { fn: 'actionOpenCompanySheet', auth: 'owner' },
   platformAuditLog: { fn: 'actionPlatformAuditLog', auth: 'owner' },
   installTriggers: { fn: 'actionInstallTriggers', auth: 'owner' },
   removeTriggers: { fn: 'actionRemoveTriggers', auth: 'owner' },
   setScriptProperty: { fn: 'actionSetScriptProperty', auth: 'owner' },
   listScriptProperties: { fn: 'actionListScriptProperties', auth: 'owner' },
-  seedDemoCompany: { fn: 'actionSeedDemoCompany', auth: 'owner' },
 
   /* --- session / profile ------------------------------------------------- */
   me: { fn: 'actionMe', auth: 'user' },
@@ -96,7 +94,7 @@ var ACTIONS = {
   reviewAttendance: { fn: 'actionReviewAttendance', auth: 'staff', perm: 'reviewAttendance' },
   manualMark: { fn: 'actionManualMark', auth: 'staff', perm: 'reviewAttendance' },
   requestRegularization: { fn: 'actionRequestRegularization', auth: 'user' },
-  listRegularizations: { fn: 'actionListRegularizations', auth: 'staff', perm: 'approveRegularization' },
+  listRegularizations: { fn: 'actionListRegularizations', auth: 'user' },  // staff: the queue · worker: own requests
   decideRegularization: { fn: 'actionDecideRegularization', auth: 'staff', perm: 'approveRegularization' },
   todayDashboard: { fn: 'actionTodayDashboard', auth: 'staff' },
   liveMap: { fn: 'actionLiveMap', auth: 'staff' },
@@ -314,14 +312,6 @@ function extractBearer_(meta) {
 /* -------------------------------------------------------------------------- */
 /*  Response envelope                                                         */
 /* -------------------------------------------------------------------------- */
-
-function ok_(data, meta) {
-  return jsonResponse_({
-    success: true,
-    data: data === undefined ? {} : data,
-    meta: meta || { serverTime: iso_(new Date()) }
-  });
-}
 
 function fail_(message, code, requestId, actionName, started) {
   return jsonResponse_({

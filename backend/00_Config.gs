@@ -32,8 +32,7 @@ var PROP = {
   TOKEN_SECRET: 'TOKEN_SECRET',      // HMAC secret for session tokens
   DRIVE_ROOT_ID: 'DRIVE_ROOT_ID',    // Root Drive folder holding per-company folders
   TIMEZONE: 'TIMEZONE',              // Platform default timezone
-  DEV_MODE: 'DEV_MODE',              // 'true' enables demo seeding + OTP echo
-  DEMO_SEEDED: 'DEMO_SEEDED',        // internal flag
+  DEV_MODE: 'DEV_MODE',              // 'true' echoes OTP codes in API responses - dev only, never production
   WHATSAPP_TOKEN: 'WHATSAPP_TOKEN',  // optional WhatsApp Cloud API
   WHATSAPP_PHONE_ID: 'WHATSAPP_PHONE_ID',
   MAPS_API_KEY: 'MAPS_API_KEY',      // optional Google Geocoding API key
@@ -142,6 +141,16 @@ var DEFAULT_SETTINGS = {
   rainThresholdMm: '20',
   notifyOnFlagged: 'Y',
   notifyChannel: 'Email',
+  maxGpsAccuracy: '500',            // marks with a worse fix than this are flagged
+  offlineMaxAgeHours: '26',         // how long an offline-captured mark stays valid
+  breakMinutes: '0',
+  paidHolidays: 'Y',
+  payrollDaysBasis: '26',           // monthly salary ÷ this = per-day rate
+  expenseProofRequired: 'N',
+  autoMonthlyReport: 'Y',
+  reportRecipients: '',             // extra comma-separated e-mails for the 1st-of-month report
+  heatThresholdC: '45',
+  projectCodePrefix: '',
   currency: 'INR',
   setupCompleted: 'N',
   companyAddress: '',
@@ -411,17 +420,8 @@ var COMPANY_TAB_ORDER = [
 var PLATFORM_TAB_ORDER = ['CompanySignupRequests', 'CompanyRegistry', 'LoginIndex', 'PlatformAuditLog'];
 
 /**
- * Actions that require NO authentication (public + auth entry points).
+ * Authentication is declared once, per action, in the router's ACTIONS table
+ * (04_Router.gs) — `auth: 'none' | 'user' | 'staff' | 'owner'`. There is
+ * deliberately no second copy of that list here to drift out of sync; dev/verify.mjs
+ * fails the build if anything else duplicates it.
  */
-var PUBLIC_ACTIONS = [
-  'ping', 'registerCompany', 'signupStatus', 'sendOtp', 'login',
-  'loginWithOtp', 'ownerLogin', 'verifyOtp', 'bootstrapPlatform'
-];
-
-/** Actions restricted to the Platform Owner. */
-var OWNER_ACTIONS = [
-  'ownerStats', 'listSignupRequests', 'approveCompany', 'rejectCompany',
-  'listCompanies', 'setCompanyStatus', 'installTriggers', 'removeTriggers',
-  'seedDemoCompany', 'setScriptProperty', 'listScriptProperties',
-  'platformAuditLog', 'openCompanySheet'
-];
