@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Application status — SiteTrack</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<meta name="theme-color" content="#0b1220">
+<link rel="stylesheet" href="assets/css/app.css">
+</head>
+<body>
+<main class="auth-shell">
+  <div class="auth-card">
+    <div class="auth-head">
+      <img class="logo" src="assets/icons/logo.svg" alt="SiteTrack logo">
+      <h1 data-i18n="checkStatus">Check your application status</h1>
+      <p class="sub">Look up your company signup request with the request ID, e-mail or mobile number.</p>
+    </div>
+
+    <div class="field mt"><label>Request ID / e-mail / mobile</label>
+      <div class="row" style="gap:8px">
+        <input id="key" placeholder="REQ-… or owner@company.in or mobile">
+        <button class="btn primary" id="searchBtn" data-i18n="checkStatus">Check</button>
+      </div>
+    </div>
+
+    <div id="result" class="mt"></div>
+
+    <p class="tiny muted mt" style="text-align:center">
+      <a href="signup.html">Register a company</a> · <a href="login.html">Sign in</a> · <a href="index.html">Home</a>
+    </p>
+  </div>
+</main>
+
+<div id="toasts"></div>
+<script src="config.js"></script>
+<script src="assets/js/i18n.js"></script>
+<script src="assets/js/api.js"></script>
+<script src="assets/js/ui.js"></script>
+<script>
+(function () {
+  const { h, el, toast, badge, fmtDateTime } = ST.ui;
+  ST.i18n.apply(document.body);
+
+  const STEPS = ['Pending', 'Approved'];
+
+  async function lookup() {
+    const key = el('key').value.trim();
+    if (key.length < 4) return toast('Enter your request ID, e-mail or mobile number', 'bad');
+    ST.ui.loading(el('result'));
+    const res = await ST.api.must('signupStatus', { requestId: key });
+    if (!res.success) return ST.ui.render(el('result'), h('div.err-box', null, res.error.message));
+    if (!res.data.found) return ST.ui.empty(el('result'), res.data.message || 'Not found', '🔍');
+
+    const r = res.data.request;
+    const approved = r.status === 'Approved';
+    ST.ui.render(el('result'), [
+      h('div.ok-box', approved ? 'good' : '', [
+        h('div.row', { style: { alignItems: 'center', gap: '10px' } }, [
+          h('h3', { style: { margin: '0' } }, r.companyName),
+          badge(r.status)
+        ]),
+        ST.ui.kvList([
+          ['Request ID', r.requestId],
+          ['Submitted', fmtDateTime(r.submittedAt)],
+          ['Reviewed', r.reviewedAt ? fmtDateTime(r.reviewedAt) : ''],
+          ['Company ID', r.companyId],
+          ['Note', r.reviewNote]
+        ]),
+        h('p.tiny.mt', null, r.nextStep),
+        approved ? h('a.btn.primary.mt', { href: 'login.html' }, 'Go to sign in') : null
+      ])
+    ]);
+  }
+
+  el('searchBtn').addEventListener('click', lookup);
+  el('key').addEventListener('keydown', e => { if (e.key === 'Enter') lookup(); });
+
+  const q = new URLSearchParams(location.search).get('requestId');
+  if (q) { el('key').value = q; lookup(); }
+})();
+</script>
+</body>
+</html>

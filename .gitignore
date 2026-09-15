@@ -1,20 +1,19 @@
+# --- local dev harness state (Google-Sheets polyfill writes JSON here) -------
+dev/data/
+dev/data-test/
+
+# --- node / editors ----------------------------------------------------------
 node_modules/
-.next/
-out/
-build/
-
-# runtime demo/local database
-.data/
-
-# secrets — never commit
-.env
-.env.local
-.env*.local
-*.json.key
-serviceAccount*.json
-credentials*.json
-
-# misc
+npm-debug.log*
 .DS_Store
-*.tsbuildinfo
-next-env.d.ts
+.vscode/
+.idea/
+*.local.json
+
+# --- clasp (contains script IDs / auth) --------------------------------------
+.clasp.json
+.clasprc.json
+
+# --- OS / misc ---------------------------------------------------------------
+Thumbs.db
+*.swp
