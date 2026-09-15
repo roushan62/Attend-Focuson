@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>SiteTrack — Site staff app</title>
+<meta name="description" content="SiteTrack worker app: GPS + selfie attendance, leave, expenses and history — works offline.">
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0b1220">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png">
+<link rel="stylesheet" href="assets/css/app.css">
+</head>
+<body class="mobile-body">
+
+<!-- OTP login panel (workers never type a password) -->
+<section id="loginPanel" class="auth-shell">
+  <div class="auth-card">
+    <div class="auth-head">
+      <img class="logo" src="assets/icons/logo.svg" alt="SiteTrack logo">
+      <h1 data-i18n="workerLogin">Site staff sign-in</h1>
+      <p class="sub" data-i18n="workerLoginSub">No password needed — sign in with your mobile number and a one-time code.</p>
+    </div>
+    <div id="staffNote"></div>
+    <div class="field mt"><label class="req" data-i18n="mobileOrId">Mobile number / User ID</label>
+      <input id="loginId" inputmode="tel" autocomplete="username" placeholder="9820011223"></div>
+    <div class="field"><label class="req" data-i18n="otpCode">One-time code</label>
+      <div class="row" style="gap:8px">
+        <input id="loginOtp" inputmode="numeric" maxlength="6" placeholder="••••••">
+        <button class="btn" id="sendOtp" data-i18n="sendOtp">Send OTP</button>
+      </div>
+      <div class="hint" id="otpHint"></div>
+    </div>
+    <button class="btn primary wfull mt" id="doLogin" data-i18n="signIn">Sign in</button>
+    <p class="tiny muted mt" style="text-align:center">
+      <a href="#" id="pwLoginLink">Staff / admin? Use password sign-in</a><br>
+      <a href="index.html" data-i18n="backHome">Back to home</a>
+    </p>
+  </div>
+</section>
+
+<!-- App shell -->
+<div id="appShell" hidden>
+  <header class="mhead-bar">
+    <span class="brand"><img src="assets/icons/logo.svg" alt="" class="brand-logo"><span class="brand-name">SiteTrack</span></span>
+    <span class="grow"></span>
+    <span class="col" style="text-align:right">
+      <b id="mName"></b>
+      <span class="tiny muted" id="mRole"></span>
+    </span>
+    <span class="dot-wrap">🔔<span class="dot" id="mBellDot" hidden></span></span>
+  </header>
+
+  <main class="mview" id="mview"></main>
+
+  <nav class="tabbar" id="tabbar"></nav>
+</div>
+
+<div id="toasts"></div>
+
+<script src="config.js"></script>
+<script src="assets/js/i18n.js"></script>
+<script src="assets/js/api.js"></script>
+<script src="assets/js/ui.js"></script>
+<script src="assets/js/mobile.js"></script>
+<script>
+  ST.ui.applyTheme();
+  ST.i18n.apply(document.body);
+  ST.ui.registerServiceWorker();
+  ST.mobile.boot();
+</script>
+</body>
+</html>

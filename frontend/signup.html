@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Register your company — SiteTrack</title>
+<meta name="description" content="Register your construction company on SiteTrack. OTP-verified signup, approval by the platform owner, then your private attendance sheet is created automatically.">
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0b1220">
+<link rel="stylesheet" href="assets/css/app.css">
+</head>
+<body>
+<main class="auth-shell">
+  <div class="auth-card" style="max-width:560px">
+    <div class="auth-head">
+      <img class="logo" src="assets/icons/logo.svg" alt="SiteTrack logo">
+      <h1 data-i18n="companySignup">Register your company</h1>
+      <p class="sub">Free multi-tenant onboarding. Your request is verified by mobile OTP and approved by the platform owner.</p>
+    </div>
+
+    <div id="wizard" class="mt">
+      <!-- step 1: company details -->
+      <section data-step="1">
+        <div class="field"><label class="req">Company name</label>
+          <input id="companyName" maxlength="160" placeholder="Sharma Buildcon Pvt Ltd"></div>
+        <div class="grid c2">
+          <div class="field"><label class="req">Contact person</label>
+            <input id="contactPerson" maxlength="120" placeholder="Full name"></div>
+          <div class="field"><label>Designation</label>
+            <input id="designation" maxlength="80" placeholder="Director / PM"></div>
+        </div>
+        <div class="grid c2">
+          <div class="field"><label class="req">Industry type</label>
+            <select id="industryType">
+              <option value="">Select…</option>
+              <option>Interior Fit-out</option>
+              <option>Scaffolding</option>
+              <option>General Construction</option>
+              <option>MEP / Electrical</option>
+              <option>Civil Infrastructure</option>
+              <option>Other</option>
+            </select></div>
+          <div class="field"><label class="req">GST / registration no.</label>
+            <input id="gst" maxlength="32" placeholder="22AAAAA0000A1Z5"></div>
+        </div>
+        <div class="field"><label class="req">Registered address</label>
+          <textarea id="address" maxlength="400" rows="2" placeholder="Office / registered address"></textarea></div>
+        <div class="field"><label class="req" data-i18n="email">Email</label>
+          <input id="email" type="email" maxlength="120" placeholder="owner@company.in"></div>
+        <div class="field"><label class="req" data-i18n="mobile">Mobile number</label>
+          <div class="row" style="gap:8px">
+            <input id="mobile" type="tel" inputmode="numeric" maxlength="10" placeholder="10-digit mobile">
+            <button class="btn" id="sendOtpBtn" data-i18n="sendOtp">Send OTP</button>
+          </div>
+          <div class="hint" id="otpHintLine">The OTP expires in 10 minutes and is delivered by e-mail (and SMS/WhatsApp when configured).</div>
+        </div>
+        <div class="field"><label>Company logo <span class="muted tiny">(optional, PNG/JPG)</span></label>
+          <input id="logo" type="file" accept="image/png,image/jpeg">
+          <div class="hint">Printed on every report header.</div>
+        </div>
+        <button class="btn primary wfull mt" id="nextBtn">Continue to verification</button>
+      </section>
+
+      <!-- step 2: otp -->
+      <section data-step="2" hidden>
+        <div class="field"><label class="req">Enter the 6-digit OTP sent for <b id="otpMobileLabel"></b></label>
+          <input id="otp" inputmode="numeric" maxlength="6" placeholder="••••••" style="letter-spacing:.6em;font-size:1.4rem;text-align:center">
+          <div class="hint"><span id="otpHint"></span>
+            <button class="btn ghost sm" id="resendBtn">Resend OTP</button>
+          </div>
+        </div>
+        <div class="grid c2">
+          <button class="btn" id="backBtn">Back</button>
+          <button class="btn primary" id="submitBtn" data-i18n="submitApplication">Submit application</button>
+        </div>
+      </section>
+
+      <!-- step 3: done -->
+      <section data-step="3" hidden>
+        <div class="ok-box">
+          <h3>Application submitted 🎉</h3>
+          <p class="tiny" id="doneText"></p>
+          <p class="tiny muted">Your application ID: <code id="appId"></code></p>
+          <div class="row mt">
+            <a class="btn primary" id="statusLink" href="status.html">Track status</a>
+            <a class="btn" href="index.html">Back to home</a>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <p class="tiny muted mt" style="text-align:center">
+      Already registered? <a href="status.html">Check status</a> · <a href="login.html">Sign in</a>
+    </p>
+  </div>
+</main>
+
+<div id="toasts"></div>
+<script src="config.js"></script>
+<script src="assets/js/i18n.js"></script>
+<script src="assets/js/api.js"></script>
+<script src="assets/js/ui.js"></script>
+<script>
+(async function () {
+  const { toast, el } = ST.ui;
+  ST.i18n.apply(document.body);
+  let otpSent = false;
+
+  const show = n => ST.ui.qsa('[data-step]').forEach(s => s.hidden = Number(s.dataset.step) !== n);
+
+  async function sendOtp() {
+    const mobile = el('mobile').value.replace(/\D/g, '');
+    if (!/^\d{10}$/.test(mobile)) { toast('Enter a valid 10-digit mobile number', 'bad'); return false; }
+    const res = await ST.api.call('sendSignupOtp', { mobile, email: el('email').value.trim() });
+    if (!res.success) { toast(res.error.message, 'bad'); return false; }
+    otpSent = true;
+    el('otpMobileLabel').textContent = mobile;
+    el('otpHint').textContent = (res.data.devCode ? 'Dev OTP: ' + res.data.devCode + ' · ' : '') +
+      'Sent via ' + res.data.channel + ', expires in ' + Math.round(res.data.expiresInSeconds / 60) + ' minutes.';
+    toast('OTP sent (' + res.data.channel + ')', 'good');
+    return true;
+  }
+
+  el('sendOtpBtn').addEventListener('click', async () => { if (await sendOtp()) { show(2); el('otp').focus(); } });
+  el('nextBtn').addEventListener('click', async () => {
+    if (!el('companyName').value.trim()) return toast('Company name is required', 'bad');
+    if (!el('contactPerson').value.trim()) return toast('Contact person is required', 'bad');
+    if (!el('industryType').value) return toast('Select the industry type', 'bad');
+    if (el('gst').value.trim().length < 4) return toast('Enter the GST / registration number', 'bad');
+    if (!el('address').value.trim()) return toast('Registered address is required', 'bad');
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(el('email').value)) return toast('Enter a valid email address', 'bad');
+    if (!/^\d{10}$/.test(el('mobile').value.replace(/\D/g, ''))) return toast('Enter a valid 10-digit mobile number', 'bad');
+    if (!otpSent) { if (!(await sendOtp())) return; }
+    show(2);
+  });
+  el('backBtn').addEventListener('click', () => show(1));
+  el('resendBtn').addEventListener('click', sendOtp);
+
+  el('submitBtn').addEventListener('click', async () => {
+    const payload = {
+      companyName: el('companyName').value.trim(),
+      contactPerson: el('contactPerson').value.trim(),
+      designation: el('designation').value.trim(),
+      industryType: el('industryType').value,
+      gst: el('gst').value.trim(),
+      address: el('address').value.trim(),
+      email: el('email').value.trim(),
+      mobile: el('mobile').value.replace(/\D/g, ''),
+      otp: el('otp').value.trim()
+    };
+    const file = el('logo').files && el('logo').files[0];
+    if (file) {
+      payload.logoBase64 = await ST.api.fileToDataUrl(file);
+      payload.logoMime = file.type;
+    }
+    el('submitBtn').disabled = true;
+    const res = await ST.api.must('registerCompany', payload);
+    el('submitBtn').disabled = false;
+    if (!res.success) return toast(res.error.message, 'bad');
+    el('appId').textContent = res.data.requestId || '';
+    el('doneText').textContent = res.data.message || 'Submitted.';
+    el('statusLink').href = res.data.trackUrl || 'status.html';
+    show(3);
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in — SiteTrack</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<meta name="theme-color" content="#0b1220">
+<link rel="stylesheet" href="assets/css/app.css">
+</head>
+<body>
+<main class="auth-shell">
+  <div class="auth-card">
+    <div class="auth-head">
+      <img class="logo" src="assets/icons/logo.svg" alt="SiteTrack logo">
+      <h1 data-i18n="signIn">Sign in</h1>
+      <p class="sub">One sign-in for every role. Use your user ID, e-mail or mobile number.</p>
+    </div>
+
+    <div class="tabs mt" id="modeTabs">
+      <button class="tab active" data-mode="password" data-i18n="passwordLogin">Password</button>
+      <button class="tab" data-mode="otp" data-i18n="otpLogin">Mobile OTP</button>
+    </div>
+
+    <div class="field mt"><label class="req">User ID / e-mail / mobile</label>
+      <input id="identifier" autocomplete="username" placeholder="e.g. EMP-0007 or 9820011223"></div>
+
+    <div class="field" id="pwWrap"><label class="req" data-i18n="password">Password</label>
+      <input id="password" type="password" autocomplete="current-password" placeholder="••••••••"></div>
+
+    <div class="field" id="otpWrap" hidden><label class="req">One-time code</label>
+      <div class="row" style="gap:8px">
+        <input id="otp" inputmode="numeric" maxlength="6" placeholder="6-digit code">
+        <button class="btn" id="sendOtpBtn" data-i18n="sendOtp">Send OTP</button>
+      </div>
+      <div class="hint" id="otpHint">The code is sent by SMS/WhatsApp or e-mail depending on company settings.</div>
+    </div>
+
+    <button class="btn primary wfull mt" id="loginBtn" data-i18n="signIn">Sign in</button>
+
+    <div id="postLogin" class="mt" hidden></div>
+
+    <p class="tiny muted mt" style="text-align:center">
+      <a href="signup.html">Register your company</a> · <a href="status.html">Application status</a> ·
+      <a href="owner.html">Platform owner</a>
+    </p>
+    <p class="tiny muted" style="text-align:center">
+      Demo tenant (dev server seed): <code>demo.admin@sitetrack.local</code> / <code>Demo@1234</code> ·
+      workers sign in with mobile <code>9800000011</code>…<code>9800000018</code> + OTP
+    </p>
+  </div>
+</main>
+
+<div id="toasts"></div>
+<script src="config.js"></script>
+<script src="assets/js/i18n.js"></script>
+<script src="assets/js/api.js"></script>
+<script src="assets/js/ui.js"></script>
+<script>
+(function () {
+  const { h, el, toast } = ST.ui;
+  ST.i18n.apply(document.body);
+  let mode = 'password';
+
+  ST.ui.qsa('#modeTabs .tab').forEach(btn => btn.addEventListener('click', () => {
+    mode = btn.dataset.mode;
+    ST.ui.qsa('#modeTabs .tab').forEach(b => b.classList.toggle('active', b === btn));
+    el('pwWrap').hidden = mode !== 'password';
+    el('otpWrap').hidden = mode !== 'otp';
+  }));
+
+  el('sendOtpBtn').addEventListener('click', async () => {
+    const identifier = el('identifier').value.trim();
+    if (!identifier) return toast('Enter your user ID, e-mail or mobile first', 'bad');
+    const res = await ST.api.must('sendOtp', { identifier });
+    if (!res.success) return toast(res.error.message, 'bad');
+    el('otpHint').textContent = (res.data.devCode ? 'Dev code: ' + res.data.devCode + ' · ' : '') +
+      'Sent via ' + res.data.channel + ' to ' + res.data.maskedIdentifier;
+    toast('OTP sent (' + res.data.channel + ')', 'good');
+  });
+
+  async function afterSession(data) {
+    ST.api.session.save(data.token, data);
+    // Forced password reset for freshly-created admin accounts (§3 step 6).
+    if (data.mustChangePassword) return showForcedChange(data);
+    // Device binding problems must be surfaced before the app opens.
+    if (data.device && !data.device.ok && data.device.status === 'ChangePending') {
+      return showDeviceNotice(data);
+    }
+    redirect(data);
+  }
+
+  function redirect(data) {
+    const role = data.user && data.user.role;
+    if (role === 'SiteEmployee') location.href = 'mobile.html';
+    else location.href = 'app.html';
+  }
+
+  function showDeviceNotice(data) {
+    el('postLogin').hidden = false;
+    ST.ui.render(el('postLogin'), h('div.warn-box', [
+      h('h4', null, '📵 New device detected'),
+      h('p.tiny', null, data.device.reason || 'This phone is not the bound device for your account. An approval request has been sent to your admin; attendance marking stays locked until it is approved.'),
+      h('div.row.mt', null, [
+        h('button.btn.primary', { onclick: () => redirect(data) }, 'Continue anyway'),
+        h('button.btn.ghost', { onclick: () => { ST.api.session.clear(); el('postLogin').hidden = true; } }, 'Sign out')
+      ])
+    ]));
+  }
+
+  function showForcedChange(data) {
+    el('postLogin').hidden = false;
+    const cp = h('input', { type: 'password', placeholder: 'Current / temporary password', value: el('password').value || '' });
+    const np = h('input', { type: 'password', placeholder: 'New password (min 8 chars, letter + number)' });
+    const np2 = h('input', { type: 'password', placeholder: 'Repeat new password' });
+    ST.ui.render(el('postLogin'), h('div.warn-box', [
+      h('h4', null, '🔐 Set a new password'),
+      h('p.tiny', null, 'This account was created with a temporary password. Confirm it and choose your own password to continue.'),
+      h('div.field.mt', null, cp),
+      h('div.field', null, np),
+      h('div.field', null, np2),
+      h('button.btn.primary.mt', {
+        onclick: async () => {
+          if (np.value.length < 8) return toast('Password must be at least 8 characters', 'bad');
+          if (np.value !== np2.value) return toast('Passwords do not match', 'bad');
+          const res = await ST.api.must('changePassword', { currentPassword: cp.value, newPassword: np.value });
+          if (!res.success) return toast(res.error.message, 'bad');
+          toast('Password updated — welcome!', 'good');
+          data.mustChangePassword = false;
+          ST.api.session.save(data.token, data);
+          redirect(data);
+        }
+      }, 'Save & continue')
+    ]));
+    setTimeout(() => cp.focus(), 60);
+  }
+
+  el('loginBtn').addEventListener('click', async () => {
+    const identifier = el('identifier').value.trim();
+    if (!identifier) return toast('Enter your user ID, e-mail or mobile', 'bad');
+    el('loginBtn').disabled = true;
+    const res = mode === 'password'
+      ? await ST.api.must('login', { identifier, password: el('password').value })
+      : await ST.api.must('loginWithOtp', { identifier, otp: el('otp').value.trim() });
+    el('loginBtn').disabled = false;
+    if (!res.success) return toast(res.error.message, 'bad');
+    await afterSession(res.data);
+  });
+  document.addEventListener('keydown', e => { if (e.key === 'Enter' && !el('postLogin').hidden === false) el('loginBtn').click(); });
+
+  // Already signed in? Jump straight to the right app.
+  const s = ST.api.session;
+  if (s.token && s.data) {
+    ST.api.must('me', {}).then(res => {
+      if (res.success) { ST.api.session.save(s.token, Object.assign({}, s.data, res.data)); redirect(res.data); }
+      else { s.clear(); }
+    });
+  }
+})();
+</script>
+</body>
+</html>

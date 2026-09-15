@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>SiteTrack — Staff console</title>
+<meta name="description" content="SiteTrack staff console: projects, attendance, approvals, reports and payroll.">
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0b1220">
+<link rel="stylesheet" href="assets/css/app.css">
+</head>
+<body class="app-body">
+
+<div id="offlineBar" class="offline-bar" hidden>📴 You are offline — changes queue on this device and sync automatically.</div>
+<div id="setupBar" class="setup-bar" hidden>
+  🧙 <b>Finish company setup</b> — profile, geofence rules, attendance window and calendar.
+  <button class="btn sm primary" id="setupBarBtn">Run setup wizard</button>
+</div>
+
+<header class="appbar">
+  <button class="btn ghost icon" id="menuBtn" aria-label="Menu">☰</button>
+  <span class="brand">
+    <img src="assets/icons/logo.svg" alt="" class="brand-logo">
+    <span class="brand-name">SiteTrack</span>
+    <span class="brand-co" id="brandCompany"></span>
+  </span>
+  <span class="grow"></span>
+  <button class="btn ghost icon" id="bellBtn" aria-label="Notifications">🔔<span class="dot" id="bellDot" hidden></span></button>
+  <button class="btn ghost icon" id="langBtn" title="हिंदी / English">🌐</button>
+  <button class="btn ghost icon" id="themeBtn" title="Toggle theme">🌓</button>
+  <button class="btn ghost icon" id="installBtn" title="Install app" hidden>⤓</button>
+  <span class="userchip">
+    <span class="avatar" id="userAvatar"></span>
+    <span class="col">
+      <b id="userName"></b>
+      <span class="tiny" id="chipRole"></span>
+    </span>
+  </span>
+  <button class="btn ghost sm" id="logoutBtn" data-i18n="signOut">Sign out</button>
+</header>
+
+<div class="app-frame">
+  <nav class="sidenav" id="sidenav"></nav>
+  <main class="content" id="view"></main>
+</div>
+
+<div id="toasts"></div>
+
+<script src="config.js"></script>
+<script src="assets/js/i18n.js"></script>
+<script src="assets/js/api.js"></script>
+<script src="assets/js/ui.js"></script>
+<script src="assets/js/map.js"></script>
+<script src="assets/js/admin.js"></script>
+<script>
+  ST.ui.applyTheme();
+  ST.i18n.apply(document.body);
+  ST.ui.registerServiceWorker();
+  ST.admin.boot();
+</script>
+</body>
+</html>
