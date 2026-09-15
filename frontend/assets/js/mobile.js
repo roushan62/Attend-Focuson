@@ -42,6 +42,21 @@
     });
   }
 
+  /**
+   * Today's marks only — cheaper than `me` on a weak site network, which matters
+   * because the home tab repaints after every check-in.
+   */
+  function refreshToday() {
+    if (!navigator.onLine) return Promise.resolve(null);
+    return api.must('myAttendanceToday', {}).then(function (res) {
+      if (!res.success || !state.me) return res.success ? null : refresh();
+      state.me = Object.assign({}, state.me, { today: res.data });
+      session.save(session.token, Object.assign({}, session.data, { today: res.data }));
+      paintHeader();
+      return res.data;
+    }).catch(function () { return null; });
+  }
+
   function paintHeader() {
     var me = state.me || {};
     var u = me.user || {};
@@ -53,7 +68,7 @@
   }
 
   function updateQueueChip() {
-    var q = api.queue.list();
+    var q = api.queue.all();   // the offline queue exposes all()/pending(), never list()
     var chip = ui.el('queueChip');
     if (!chip) return;
     chip.hidden = !q.length;
@@ -178,7 +193,7 @@
         h('div', [h('h2', null, t('hello', { name: firstName() })), h('p.sub', null, ui.fmtDate(today.date) + ' · ' + weekdayName(today.date))]),
         h('div.row', null, [
           h('button.chip', { id: 'queueChip', hidden: true, onclick: function () { syncNow(); } }),
-          h('button.btn.ghost.icon', { onclick: function () { refresh().then(function () { showTab('home'); }); } }, '↻')
+          h('button.btn.ghost.icon', { onclick: function () { refreshToday().then(function () { showTab('home'); }); } }, '↻')
         ])
       ]),
       h('div.stat-strip', [
@@ -265,7 +280,7 @@
                 state.selfie = api.device.snap(video, ST.config.SELFIE_WIDTH, ST.config.SELFIE_QUALITY);
                 shotPreview.src = state.selfie; shotPreview.hidden = false; video.hidden = true;
                 statusLine.textContent = t('selfieOk');
-                ui.device.vibrate(40);
+                api.device.vibrate(40);
                 doMark(close);
               } catch (e) { ui.toast(t('cameraFail'), 'bad'); }
               return;
@@ -309,7 +324,7 @@
         close();
         var d = res.data;
         if (d.alreadyMarked) return ui.toast(d.message, 'warn');
-        ui.device.vibrate([60, 40, 60]);
+        api.device.vibrate([60, 40, 60]);
         ui.modal({
           title: t('marked', { status: d.attendance ? d.attendance.status : 'OK' }),
           body: [
@@ -426,7 +441,7 @@
               if (!res) return;
               close();
               if (!res.success) return ui.toast(res.error.message, 'bad');
-              ui.device.vibrate([60, 40, 60]);
+              api.device.vibrate([60, 40, 60]);
               ui.toast(t('marked', { status: res.data.attendance ? res.data.attendance.status : 'OK' }), 'good');
               refresh().then(function () { showTab('home'); });
             });
@@ -542,7 +557,12 @@
         ui.render(list, rows.length ? h('div.list', null, rows.map(function (r) {
           return h('div.list-row', [
             h('div', [h('b', null, r.kind + ' — ' + r.title), h('div.tiny.muted', null, (r.note || '') + ' · ' + ui.ago(r.at))]),
-            ui.badge(r.status)
+            h('div', { style: { textAlign: 'right' } }, [
+              ui.badge(r.status),
+              (r.kind === 'Leave' && r.status === 'Pending') ? h('button.btn.sm.ghost', {
+                onclick: function () { cancelLeave(r.id); }
+              }, t('cancel')) : null
+            ])
           ]);
         })) : h('div.empty', [h('span.ico', null, '📨'), h('div', null, t('noRequests'))]));
       });
@@ -550,6 +570,72 @@
 
     ui.render(el, [h('div.mhead', [h('h2', null, t('requests'))]), actions, list]);
     reload();
+  }
+
+  function cancelLeave(leaveId) {
+    ui.confirm(t('cancel') + ' — ' + t('leave') + '?').then(function (ok) {
+      if (!ok) return;
+      api.must('cancelLeave', { leaveId: leaveId }).then(function (r) {
+        if (!r.success) return ui.toast(r.error.message, 'bad');
+        ui.toast(t('cancelled'), 'good');
+        showTab('requests');
+      });
+    });
+  }
+
+  /** Self-service contact details — the fields a foreman actually needs fast. */
+  function myDetailsForm() {
+    var u = ((state.me || {}).user) || {};
+    ui.promptFields(t('myProfile'), [
+      { name: 'name', label: t('name'), value: u.name || u.Name || '', required: true },
+      { name: 'address', label: t('address'), type: 'textarea', value: u.address || u.Address || '' },
+      {
+        name: 'emergencyContact', label: 'Emergency contact', value: u.emergencyContact || u.EmergencyContact || '',
+        hint: 'Digits, spaces and + ( ) -'
+      },
+      {
+        name: 'weeklyOff', label: 'Weekly off', type: 'select',
+        value: String(u.weeklyOff !== undefined ? u.weeklyOff : (u.WeeklyOff !== undefined ? u.WeeklyOff : '0')),
+        options: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map(function (d, i) {
+          return { value: String(i), label: d };
+        })
+      }
+    ], t('save')).then(function (v) {
+      if (!v) return;
+      var payload = {};
+      ['name', 'address', 'emergencyContact', 'weeklyOff'].forEach(function (k) {
+        var next = String(v[k] == null ? '' : v[k]).trim();
+        if (next) payload[k] = next;
+      });
+      if (!Object.keys(payload).length) return ui.toast(t('noData'), 'warn');
+      api.must('updateMyProfile', payload).then(function (r) {
+        if (!r.success) return ui.toast(r.error.message, 'bad');
+        refresh().then(function () { ui.toast(t('saved'), 'good'); showTab('more'); });
+      });
+    });
+  }
+
+  /**
+   * New phone without a sign-in prompt: file the request from here so the
+   * foreman can approve the swap before the next shift starts.
+   */
+  function requestNewDevice(done) {
+    var fp = api.device.fingerprint ? api.device.fingerprint() : '';
+    if (!fp || fp.length < 8) return ui.toast(t('deviceInfo') + ' — ' + t('noData'), 'bad');
+    ui.promptFields(t('requestDeviceChange'), [
+      {
+        name: 'label', label: 'This phone', required: true,
+        value: api.device.label ? String(api.device.label()).slice(0, 60) : 'Android phone',
+        hint: 'Your admin sees this name when approving'
+      }
+    ], t('submit')).then(function (v) {
+      if (!v) return;
+      api.must('requestDeviceChange', { deviceFingerprint: fp, deviceLabel: String(v.label).slice(0, 60) }).then(function (r) {
+        if (!r.success) return ui.toast(r.error.message, 'bad');
+        ui.toast(t('requestSent'), 'good');
+        if (done) done();
+      });
+    });
   }
 
   function leaveForm(done) {
@@ -663,6 +749,17 @@
     var u = me.user || {};
     ui.render(el, [
       h('div.mhead', [h('h2', null, t('more'))]),
+      (function () {
+        var st = String(u.deviceStatus || u.DeviceStatus || '');
+        if (st !== 'Blocked' && st !== 'PendingChange') return null;
+        return h('div.card', { style: { borderColor: 'crimson' } }, [
+          h('b', null, st === 'Blocked' ? '⚠ ' + t('deviceBlocked') : '⏳ ' + t('devicePending')),
+          h('p.tiny.muted', null, st === 'Blocked'
+            ? 'Attendance marking is stopped on this phone until an admin clears it.'
+            : 'A device change request is waiting for approval — you will get a notification when it is cleared.'),
+          h('button.btn.sm.mt', { onclick: function () { requestNewDevice(function () { refresh(); }); } }, t('requestDeviceChange'))
+        ]);
+      })(),
       h('div.card', [
         h('div.row', { style: { gap: '12px', alignItems: 'center' } }, [
           h('span.avatar.xl', null, ui.initials(u.name || u.Name)),
@@ -677,6 +774,8 @@
             ST.i18n.setLocale(next); ST.store.set(ST.keys.locale, next);
             ST.i18n.apply(document.body); showTab(state.tab);
           }),
+          moreRow('👤', t('myProfile'), function () { myDetailsForm(); }),
+          moreRow('📱', t('requestDeviceChange'), function () { requestNewDevice(function () { refresh(); }); }),
           moreRow('🌓', t('theme'), function () { ui.toggleTheme(); }),
           moreRow('⤓', t('installApp'), function () { ui.installApp(); }),
           moreRow('🔐', t('changePassword'), function () { changePw(); }),

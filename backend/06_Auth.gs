@@ -37,13 +37,6 @@ function loginIndexUpsert_(user, companyId) {
   });
 }
 
-function loginIndexRemove_(identifierKeys) {
-  var ss = masterSpreadsheet_();
-  identifierKeys.forEach(function (k) {
-    if (k) deleteRecord_(ss, 'LoginIndex', 'LookupKey', k);
-  });
-}
-
 /**
  * Resolve which company a login identifier belongs to.
  * Order: explicit companyId → LoginIndex → (fallback) registry scan.

@@ -330,7 +330,7 @@ function issueOtp_(ss, user, channel) {
   return {
     expiresAt: fmtDateTime_(expiry),
     channel: (user.Email && emailOk_(user.Email)) ? 'Email' : 'SMS',
-    // Echoed ONLY in dev/demo mode where no real SMS gateway exists (§3 OTP step).
+    // Echoed ONLY when DEV_MODE is on, i.e. where no real SMS gateway exists (§3).
     devCode: devMode_() ? code : undefined
   };
 }

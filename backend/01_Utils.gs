@@ -50,17 +50,8 @@ function devMode_() {
 /*  Dates & time                                                              */
 /* -------------------------------------------------------------------------- */
 
-/** Current time in the platform/company timezone as a Date object (UTC-based). */
-function now_() {
-  return new Date();
-}
-
 function fmtDate_(d, tz) {
   return Utilities.formatDate(toDate_(d), tz || platformTimezone_(), 'yyyy-MM-dd');
-}
-
-function fmtTime_(d, tz) {
-  return Utilities.formatDate(toDate_(d), tz || platformTimezone_(), 'HH:mm:ss');
 }
 
 function fmtDateTime_(d, tz) {
@@ -158,10 +149,6 @@ function timeToMinutes_(hhmm) {
 function minutesOfDay_(dateObj, tz) {
   var s = Utilities.formatDate(toDate_(dateObj), tz || platformTimezone_(), 'HH:mm');
   return timeToMinutes_(s);
-}
-
-function addMinutes_(dateObj, mins) {
-  return new Date(toDate_(dateObj).getTime() + mins * 60000);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -350,13 +337,6 @@ function haversineMeters(lat1, lon1, lat2, lon2) {
   return Math.round(2 * R * Math.asin(Math.min(1, Math.sqrt(h))));
 }
 
-/** Approximate lat/long bounding box for a radius (used for cheap pre-filters). */
-function boundingBox_(lat, lon, radiusMeters) {
-  var dLat = radiusMeters / 111320;
-  var dLon = radiusMeters / (111320 * Math.max(0.01, Math.cos(lat * Math.PI / 180)));
-  return { north: lat + dLat, south: lat - dLat, east: lon + dLon, west: lon - dLon };
-}
-
 /**
  * Generates a compact site QR payload. Printed at the site office as a GPS
  * fallback (§9.3). Format: SITETRACK|<companyId>|<projectId>|<challenge>
@@ -387,16 +367,6 @@ function uniq_(arr) {
 function indexBy_(rows, key) {
   var map = {};
   for (var i = 0; i < rows.length; i++) map[String(rows[i][key])] = rows[i];
-  return map;
-}
-
-function groupBy_(rows, keyFn) {
-  var map = {};
-  for (var i = 0; i < rows.length; i++) {
-    var k = String(keyFn(rows[i], i));
-    if (!map[k]) map[k] = [];
-    map[k].push(rows[i]);
-  }
   return map;
 }
 
