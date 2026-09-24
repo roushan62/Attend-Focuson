@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Platform owner — SiteTrack</title>
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#0b1220">
+<?!= includeCss_('app_css') ?>
+</head>
+<body class="app-body">
+
+<header class="appbar">
+  <span class="brand">
+    <?!= logoSvg_() ?>
+    <span class="brand-name">SiteTrack</span>
+    <span class="chip warn">PLATFORM OWNER</span>
+  </span>
+  <span class="grow"></span>
+  <a class="btn ghost sm" href="?page=index">Public site</a>
+  <button class="btn ghost sm" id="ownerLogout">Lock panel</button>
+</header>
+
+<div class="wrap mt2">
+  <section id="loginBox" class="auth-card" style="max-width:460px;margin:8vh auto" hidden>
+    <div class="auth-head">
+      <div class="logo"><?!= logoSvgLarge_() ?></div>
+      <h1>Platform owner key</h1>
+      <p class="sub">This panel is not linked from anywhere and requires the OWNER_KEY script property generated during bootstrap.</p>
+    </div>
+    <div class="field mt"><label class="req">Owner key</label>
+      <input id="ownerKey" type="password" autocomplete="off" placeholder="paste OWNER_KEY"></div>
+    <button class="btn primary wfull mt" id="ownerLoginBtn">Unlock panel</button>
+    <p class="tiny muted mt" style="text-align:center">Lost the key? Re-run <code>setupScript()</code> in the Apps Script editor to rotate it.</p>
+  </section>
+
+  <section id="panel" hidden>
+    <div class="tabs" id="ownerTabs"></div>
+    <div id="ownerPane" class="mt"></div>
+  </section>
+</div>
+
+<div id="toasts"></div>
+<?!= includeJs_('tmpl_config_js') ?>
+<?!= includeJs_('i18n_js') ?>
+<?!= includeJs_('api_js') ?>
+<?!= includeJs_('ui_js') ?>
+<?!= includeJs_('owner_js') ?>
+<script>
+  ST.ui.applyTheme();
+  ST.owner.boot();
+</script>
+</body>
+</html>

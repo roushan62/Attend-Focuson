@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>SiteTrack — Staff console</title>
+<meta name="description" content="SiteTrack staff console: projects, attendance, approvals, reports and payroll.">
+<meta name="theme-color" content="#0b1220">
+<?!= includeCss_('app_css') ?>
+</head>
+<body class="app-body">
+
+<div id="offlineBar" class="offline-bar" hidden>📴 You are offline — changes queue on this device and sync automatically.</div>
+<div id="setupBar" class="setup-bar" hidden>
+  🧙 <b>Finish company setup</b> — profile, geofence rules, attendance window and calendar.
+  <button class="btn sm primary" id="setupBarBtn">Run setup wizard</button>
+</div>
+
+<header class="appbar">
+  <button class="btn ghost icon" id="menuBtn" aria-label="Menu">☰</button>
+  <span class="brand">
+    <?!= logoSvg_() ?>
+    <span class="brand-name">SiteTrack</span>
+    <span class="brand-co" id="brandCompany"></span>
+  </span>
+  <span class="grow"></span>
+  <button class="btn ghost icon" id="bellBtn" aria-label="Notifications">🔔<span class="dot" id="bellDot" hidden></span></button>
+  <button class="btn ghost icon" id="langBtn" title="हिंदी / English">🌐</button>
+  <button class="btn ghost icon" id="themeBtn" title="Toggle theme">🌓</button>
+  <span class="userchip">
+    <span class="avatar" id="userAvatar"></span>
+    <span class="col">
+      <b id="userName"></b>
+      <span class="tiny" id="chipRole"></span>
+    </span>
+  </span>
+  <button class="btn ghost sm" id="logoutBtn" data-i18n="signOut">Sign out</button>
+</header>
+
+<div class="app-frame">
+  <nav class="sidenav" id="sidenav"></nav>
+  <main class="content" id="view"></main>
+</div>
+
+<div id="toasts"></div>
+
+<?!= includeJs_('tmpl_config_js') ?>
+<?!= includeJs_('i18n_js') ?>
+<?!= includeJs_('api_js') ?>
+<?!= includeJs_('ui_js') ?>
+<?!= includeJs_('map_js') ?>
+<?!= includeJs_('admin_js') ?>
+<script>
+  ST.ui.applyTheme();
+  ST.i18n.apply(document.body);
+  ST.admin.boot();
+</script>
+</body>
+</html>
