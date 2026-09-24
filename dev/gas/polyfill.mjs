@@ -274,7 +274,18 @@ export function createPolyfill({ dataDir, verbose = false }) {
       const buf = meta.blobFile ? fs.readFileSync(path.join(BLOBS_DIR, meta.blobFile)) : Buffer.alloc(0);
       return new Blob(buf, meta.mime, meta.name);
     }
-    getParents() { return new DriveIterator([new DriveFolder(this.#meta().folderId)]); }
+    getAs(mime) {
+      const meta = this.#meta();
+      const buf = meta.blobFile ? fs.readFileSync(path.join(BLOBS_DIR, meta.blobFile)) : Buffer.alloc(0);
+      if (String(mime).indexOf('pdf') >= 0) {
+        return new Blob(Buffer.from('%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n', 'utf8'), 'application/pdf', String(meta.name || 'file').replace(/\.html?$/i, '') + '.pdf');
+      }
+      return new Blob(buf, mime, meta.name);
+    }
+    getParents() {
+      const parent = this.#meta().folderId;
+      return new DriveIterator(parent ? [new DriveFolder(parent)] : []);
+    }
   }
 
   class DriveFolder {
@@ -284,6 +295,10 @@ export function createPolyfill({ dataDir, verbose = false }) {
     getName() { return this.#meta().name || ''; }
     getUrl() { return 'https://drive.google.com/drive/folders/' + this.id; }
     setSharing() { return this; }
+    getParents() {
+      const parent = this.#meta().parent;
+      return new DriveIterator(parent ? [new DriveFolder(parent)] : []);
+    }
     getFoldersByName(name) {
       const kids = Object.keys(driveState.folders)
         .filter((k) => driveState.folders[k].parent === this.id && driveState.folders[k].name === name)
@@ -356,8 +371,16 @@ export function createPolyfill({ dataDir, verbose = false }) {
   const MailApp = {
     getRemainingDailyQuota: () => 100,
     sendEmail: (a, b, c, d) => {
+      const strip = (h) => String(h || '')
+        .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/&nbsp;/g, ' ')
+        .replace(/&amp;/g, '&')
+        .replace(/[ \t]+/g, ' ')
+        .trim();
       const entry = typeof a === 'object'
-        ? { to: a.to, subject: a.subject, body: a.body, html: !!a.htmlBody, name: a.name, attachments: (a.attachments || []).map((x) => x.name || 'file') }
+        ? { to: a.to, cc: a.cc, subject: a.subject, body: a.body || strip(a.htmlBody), html_body: a.htmlBody || '', name: a.name, attachments: (a.attachments || []).map((x) => x.name || 'file') }
         : { to: a, subject: b, body: c, attachments: [] };
       entry.at = new Date().toISOString();
       outbox.push(entry);
@@ -595,6 +618,10 @@ export function createPolyfill({ dataDir, verbose = false }) {
         onWeekDay(d) { builder.weekDay = d; return builder; },
         atHour(h) { builder.hour = h; return builder; },
         everyDays(n) { builder.every = n; return builder; },
+        everyHours(n) { builder.everyHours = n; return builder; },
+        everyMinutes(n) { builder.everyMinutes = n; return builder; },
+        after(ms) { builder.after = ms; return builder; },
+        atDate(d) { builder.atDate = d; return builder; },
         nearMinute() { return builder; },
         create() { triggers.push({ fn, ...builder }); return builder; }
       };
