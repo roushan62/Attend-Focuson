@@ -9,6 +9,15 @@
 
 var Demo = {
 
+  /** The installer (and the spreadsheet menu) call the seeder without a session. */
+  systemCtx_: function (ctx) {
+    if (ctx && ctx.userId) return ctx;
+    return {
+      scope: 'SUPER', userId: 'SYSTEM', name: 'FocusHR installer', companyId: '', employeeId: '',
+      role_code: 'SUPER_ADMIN', ip: 'setup', userAgent: 'setup', system: true
+    };
+  },
+
   DEMO: {
     company_name: 'Sunrise Infra Demo Pvt Ltd',
     admin_name: 'Anita Deshmukh',
@@ -56,6 +65,7 @@ var Demo = {
 
   /* =========================================================== seed ==== */
   seed: function (ctx, payload) {
+    ctx = Demo.systemCtx_(ctx);
     Perm.require(ctx, 'super.manage');
     var startedAt = new Date().getTime();
     var wantPeople = Math.min(16, Math.max(6, intVal_(payload.employees, 12)));
@@ -529,6 +539,7 @@ var Demo = {
 
   /* ========================================================== reset ==== */
   reset: function (ctx, payload) {
+    ctx = Demo.systemCtx_(ctx);
     Perm.require(ctx, 'super.manage');
     if (txt_(payload.confirm).toUpperCase() !== 'DELETE') {
       fail_('VALIDATION', 'Type DELETE in the confirmation box to wipe a workspace.', { field: 'confirm' });

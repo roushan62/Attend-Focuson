@@ -11,6 +11,15 @@
  * ============================================================================
  */
 
+/* ========================================================== client files == */
+/**
+ * Inlines one of the client HTML files inside Index.html.
+ * Usage in Index.html:   <?!= include('Styles'); ?>
+ */
+function include(fileName) {
+  return HtmlService.createHtmlOutputFromFile(String(fileName)).getContent();
+}
+
 /* ============================================================== web app == */
 function doGet(e) {
   return Code.serve_(e || {}, 'GET');
