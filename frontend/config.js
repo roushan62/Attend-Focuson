@@ -15,7 +15,7 @@
  */
 window.SITETRACK_CONFIG = {
   /** e.g. 'https://script.google.com/macros/s/AKfycb…/exec' */
-  API_URL: '',
+  API_URL: 'https://script.google.com/macros/s/AKfycby0MnadUSSoio7iBi3DXhtJKrqOfrFoEDzcb8fHDyc0GAxYUjMohDePBcSbCnzDBE7N/exec',
 
   /** Platform Owner secret (leave blank in production builds you publish). */
   OWNER_KEY: '',
