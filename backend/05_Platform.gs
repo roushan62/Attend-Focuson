@@ -448,14 +448,6 @@ function actionSetCompanyStatus(payload, ctx) {
   return { companyId: co.CompanyID, status: status };
 }
 
-function actionOpenCompanySheet(payload, ctx) {
-  assertOwner_(ctx);
-  requireFields_(payload, ['companyId']);
-  var co = findCompany_(payload.companyId);
-  assert_(co, 'Company not found', 404);
-  return { companyId: co.CompanyID, sheetId: co.SheetID, sheetUrl: sheetUrl_(co.SheetID) };
-}
-
 function actionPlatformAuditLog(payload, ctx) {
   assertOwner_(ctx);
   var ss = masterSpreadsheet_();
@@ -500,14 +492,34 @@ function sheetUrl_(sheetId) {
 }
 
 /* -------------------------------------------------------------------------- */
-/*  Demo seeding (owner only)                                                 */
+/*  Signup OTP verification                                                   */
 /* -------------------------------------------------------------------------- */
 
-function actionSeedDemoCompany(payload, ctx) {
-  assertOwner_(ctx);
-  var result = seedDemoCompany_(str_(payload.companyName, 120) || 'Demo Fitout Pvt Ltd',
-    str_(payload.superAdminEmail, 120) || 'demo.admin@sitetrack.local',
-    str_(payload.password, 40) || 'Demo@1234');
-  platformAudit_('SEED_DEMO_COMPANY', { companyId: result.companyId }, 'OK');
-  return result;
+/**
+ * Confirms a signup OTP before the applicant submits the company form, so the
+ * user gets instant feedback instead of an error after filling everything in.
+ *
+ * It deliberately does NOT consume the cached code: `registerCompany` re-checks
+ * it when the request is stored, so a verify call cannot be used to skip the
+ * real check, and an expired code still fails at submission time.
+ */
+function actionVerifyOtp(payload, ctx) {
+  requireFields_(payload, ['mobile', 'otp']);
+  var mobile = normaliseMobile_(payload.mobile);
+  assert_(mobileOk_(mobile), 'Enter a valid mobile number', 400);
+  var code = String(payload.otp).trim();
+  assert_(/^\d{6}$/.test(code), 'Enter the 6-digit code from the SMS or e-mail', 400);
+
+  var cached = '';
+  try {
+    cached = String(CacheService.getScriptCache().get(('signupotp:' + mobile).substring(0, 200)) || '');
+  } catch (e) {
+    cached = '';
+  }
+  if (!cached || cached !== code) {
+    platformAudit_('VERIFY_SIGNUP_OTP', { mobile: maskString_(mobile, 4) }, 'DENIED');
+    throw new ApiError_('That verification code is incorrect or has expired. Request a new one.', 400);
+  }
+  platformAudit_('VERIFY_SIGNUP_OTP', { mobile: maskString_(mobile, 4) }, 'OK');
+  return { verified: true, mobile: maskString_(mobile, 4) };
 }

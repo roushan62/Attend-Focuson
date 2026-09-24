@@ -69,6 +69,7 @@
           <div class="hint"><span id="otpHint"></span>
             <button class="btn ghost sm" id="resendBtn">Resend OTP</button>
           </div>
+          <div class="mt" id="otpCheck" hidden></div>
         </div>
         <div class="grid c2">
           <button class="btn" id="backBtn">Back</button>
@@ -136,6 +137,37 @@
   });
   el('backBtn').addEventListener('click', () => show(1));
   el('resendBtn').addEventListener('click', sendOtp);
+
+  // Confirm the code as soon as it is typed (verifyOtp) so a typo is caught
+  // before the applicant fills the rest of the form. It is a preview only —
+  // registerCompany still re-checks the code server-side.
+  let otpChecking = false;
+  async function checkOtp() {
+    const mobile = el('mobile').value.replace(/\D/g, '');
+    const code = el('otp').value.trim();
+    const box = el('otpCheck');
+    if (!/^\d{10}$/.test(mobile) || !/^\d{6}$/.test(code)) { box.hidden = true; return; }
+    if (otpChecking) return;
+    otpChecking = true;
+    box.hidden = false;
+    box.innerHTML = '<span class="badge info">Checking code…</span>';
+    const res = await ST.api.call('verifyOtp', { mobile, otp: code });
+    otpChecking = false;
+    if (el('otp').value.trim() !== code) return;   // superseded by a newer keystroke
+    if (res.success && res.data.verified) {
+      box.innerHTML = '<span class="badge ok">Number verified</span> ' +
+        '<span class="tiny muted">You can submit the application now.</span>';
+      el('submitBtn').focus();
+    } else {
+      const why = (res.error && res.error.message) || 'That code does not match yet.';
+      box.innerHTML = '<span class="badge bad">Not verified</span> ' +
+        '<span class="tiny muted">' + ST.ui.esc(why) + '</span>';
+    }
+  }
+  el('otp').addEventListener('input', (e) => {
+    if (/^\d{6}$/.test(e.target.value.trim())) checkOtp();
+    else el('otpCheck').hidden = true;
+  });
 
   el('submitBtn').addEventListener('click', async () => {
     const payload = {

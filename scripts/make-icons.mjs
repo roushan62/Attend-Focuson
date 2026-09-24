@@ -147,9 +147,7 @@ const targets = [
   { file: 'icon-512.png', size: 512, maskable: false },
   { file: 'icon-maskable-192.png', size: 192, maskable: true },
   { file: 'icon-maskable-512.png', size: 512, maskable: true },
-  { file: 'apple-touch-icon.png', size: 180, maskable: false },
-  { file: 'favicon-64.png', size: 64, maskable: false },
-  { file: 'favicon-32.png', size: 32, maskable: false }
+  { file: 'apple-touch-icon.png', size: 180, maskable: false }
 ];
 
 for (const t of targets) {

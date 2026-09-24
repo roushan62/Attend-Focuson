@@ -6,7 +6,7 @@
 ┌────────────┐  ┌────────────┐  ┌────────────┐        ┌─────────────────────────┐
 │ staff SPA  │  │ worker PWA │  │ owner panel│        │  Google Apps Script     │
 │ app.html   │  │ mobile.html│  │ owner.html │        │  Web App (doGet/doPost) │
-└─────┬──────┘  └─────┬──────  └─────┬──────┘        │  04_Router → 101 actions│
+└─────┬──────┘  └─────┬──────  └─────┬──────┘        │  04_Router → 99 actions│
       │   JSON over HTTPS (text/plain POST, no CORS pre-flight)                 │
       └───────────────┴───────────────┘                 └──────────┬────────────┘
                      │                                            │

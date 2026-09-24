@@ -109,6 +109,8 @@ window.ST = window.ST || {};
       qrScanned: 'QR code scanned', queuedOffline: 'Saved offline — will sync automatically',
       regularize: 'Request correction', requestSent: 'Request sent to your supervisor',
       requests: 'Requests', retake: 'Retake', saved: 'Saved',
+      cancelled: 'Cancelled',
+      deviceBlocked: 'This device is blocked', devicePending: 'Device change awaiting approval',
       selfieOk: 'Selfie captured', selfieTitle: 'Live selfie', sending: 'Sending…',
       setNewPassword: 'Set a new password', snap: 'Snap', source: 'Source',
       startingCamera: 'Starting camera…', submitApplication: 'Submit application',
@@ -214,6 +216,8 @@ applyExpense: 'खर्च का दावा करें', applyTransfer: '�
       qrScanned: 'क्यूआर कोड स्कैन हुआ', queuedOffline: 'ऑफ़लाइन सहेजा गया — अपने आप सिंक होगा',
       regularize: 'सुधार अनुरोध', requestSent: 'अनुरोध सुपरवाइज़र को भेजा गया',
       requests: 'अनुरोध', retake: 'फिर से लें', saved: 'सहेजा गया',
+      cancelled: 'रद्द किया गया',
+      deviceBlocked: 'यह डिवाइस अवरोधित है', devicePending: 'डिवाइस परिवर्तन स्वीकृति का प्रतीक्षित है',
       selfieOk: 'सेल्फी ली गई', selfieTitle: 'लाइव सेल्फी', sending: 'भेजा जा रहा है…',
       setNewPassword: 'नया पासवर्ड सेट करें', snap: 'फोटो', source: 'स्रोत',
       startingCamera: 'कैमरा शुरू हो रहा है…', submitApplication: 'आवेदन जमा करें',
@@ -280,7 +284,7 @@ applyExpense: 'खर्च का दावा करें', applyTransfer: '�
   }
 
   window.ST.i18n = {
-    t: t, set: setLocale, get locale() { return current; },
+    t: t, setLocale: setLocale, get locale() { return current; },
     locales: [{ code: 'en', label: 'English' }, { code: 'hi', label: 'हिंदी' }],
     apply: apply, money: money, dict: DICT
   };

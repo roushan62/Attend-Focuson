@@ -90,7 +90,8 @@ function evaluateMark_(opts) {
   var holiday = isHolidayFor_(opts.holidays, fmtDate_(when, tz), project.ProjectID);
   var weekOff = isWeekOffFor_(opts.user, settings, when);
 
-  var status = reasons.length ? 'Flagged' : (late ? 'Present' : 'Present');
+  // Lateness is a marker on a Present day (LateMark), never a separate status.
+  var status = reasons.length ? 'Flagged' : 'Present';
   return {
     status: status,
     lateMark: late,
@@ -747,8 +748,16 @@ function actionRequestRegularization(payload, ctx) {
 
 function actionListRegularizations(payload, ctx) {
   var ss = ctx.ss;
+  var staff = isStaffRole_(ctx.role);
   var rows = scopedRows_(ctx, readTable_(ss, 'RegularizationRequests'), 'ProjectID');
-  var status = str_(payload.status, 20) || 'Pending';
+  if (!staff) {
+    // A worker may follow their own requests — never the company queue.
+    rows = readTable_(ss, 'RegularizationRequests').filter(function (r) {
+      return String(r.UserID) === String(ctx.userId);
+    });
+  }
+  // Staff default to the pending queue; a worker wants the whole history.
+  var status = str_(payload.status, 20) || (staff ? 'Pending' : 'All');
   if (status !== 'All') rows = rows.filter(function (r) { return String(r.Status) === status; });
   rows = sortBy_(rows, function (r) { return String(r.AppliedAt); }, true);
   var umap = userMap_(ss);

@@ -22,7 +22,7 @@ function editableSettingKeys_() {
     'expenseProofRequired', 'notifyOnFlagged', 'notifyChannel', 'reportFooterText',
     'reportIncludeLogo', 'reportIncludeClientPmc', 'gpsRetentionMonths',
     'maxGpsAccuracy', 'offlineMaxAgeHours', 'heatThresholdC', 'currency',
-    'payrollDay', 'autoMonthlyReport', 'reportRecipients'
+    'paidHolidays', 'payrollDaysBasis', 'autoMonthlyReport', 'reportRecipients'
   ]);
 }
 
@@ -116,7 +116,20 @@ function actionSaveSettings(payload, ctx) {
       case 'requireSelfie': case 'allowQrFallback': case 'requireDeviceBinding':
       case 'autoRainDayFlag': case 'reportIncludeLogo': case 'reportIncludeClientPmc':
       case 'notifyOnFlagged': case 'expenseProofRequired': case 'autoMonthlyReport':
+      case 'paidHolidays':
         v = yn_(v, false); break;
+      case 'maxGpsAccuracy':
+        assert_(num_(v, 500) >= 10 && num_(v, 500) <= 5000, 'Max GPS accuracy must be 10–5000 m', 400);
+        v = String(Math.round(num_(v, 500))); break;
+      case 'offlineMaxAgeHours':
+        assert_(num_(v, 26) >= 1 && num_(v, 26) <= 168, 'Offline mark age must be 1–168 hours', 400);
+        v = String(Math.round(num_(v, 26))); break;
+      case 'payrollDaysBasis':
+        assert_(num_(v, 26) >= 1 && num_(v, 26) <= 31, 'Payroll days basis must be 1–31', 400);
+        v = String(Math.round(num_(v, 26))); break;
+      case 'heatThresholdC':
+        assert_(num_(v, 45) >= 0 && num_(v, 45) <= 60, 'Heat threshold must be 0–60 °C', 400);
+        v = String(num_(v, 45)); break;
       case 'timezone':
         try { Utilities.formatDate(new Date(), v, 'yyyy'); } catch (e) {
           throw new ApiError_('Unknown timezone: ' + v, 400);

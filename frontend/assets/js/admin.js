@@ -47,6 +47,7 @@
     { id: 'approvals', icon: '✅', label: 'Approvals', perm: null, badge: 'approvals' },
     { id: 'projects', icon: '🏗️', label: 'Projects', perm: null },
     { id: 'employees', icon: '👷', label: 'Employees', perm: null },
+    { id: 'devices', icon: '📱', label: 'Devices', perm: 'editEmployees' },
     { id: 'leave', icon: '🌴', label: 'Leave', perm: null },
     { id: 'expenses', icon: '💸', label: 'Expenses', perm: null },
     { id: 'transfers', icon: '🔁', label: 'Transfers', perm: null },
@@ -312,10 +313,12 @@
           (p.flagged ? '<br>⚠ ' + p.flagged + ' flagged' : '') + '<br>' + ui.esc(p.address || '')
       };
     });
+    var weatherBox = h('div');
     ui.render(el, [
       sectionHead('Live site map', 'Today\'s check-ins per project geofence', [
         h('button.btn.sm', { onclick: function () { VIEWS.livemap(el); } }, '↻ Refresh')
       ]),
+      weatherBox,
       h('div.grid.side', [
         mapBox,
         h('div.card', [
@@ -333,7 +336,57 @@
       ])
     ]);
     ST.map.view(mapBox, { points: points, geofence: pins[0] && pins[0].radius, zoom: 12 });
+    loadSiteWeather(weatherBox);
   };
+
+  /** Rain / heat advisory per site — the 05:00 weather trigger does the same check. */
+  function loadSiteWeather(box) {
+    ui.render(box, h('div.card', null, h('p.tiny.muted', null, 'Checking the forecast for active sites…')));
+    api.must('checkSiteWeather', {}).then(function (res) {
+      if (!res.success) return ui.render(box, h('div.card', null, h('p.tiny.muted', null, res.error.message)));
+      var sites = (res.data.sites || []).filter(function (s) { return s.weather; });
+      if (!sites.length) {
+        return ui.render(box, h('div.card', null, h('p.tiny.muted', null,
+          'No weather to show — turn on WEATHER_ENABLED in Script Properties and give each site coordinates.')));
+      }
+      var flags = sites.filter(function (s) { return s.suggestedFlag; });
+      ui.render(box, h('div.card', [
+        h('div.row', { style: { alignItems: 'center', gap: '10px', flexWrap: 'wrap' } }, [
+          h('h3', { style: { margin: 0 } }, 'Site weather · ' + ui.fmtDate(res.data.date)),
+          flags.length ? ui.badge('Flagged', flags.length + ' site(s) past the threshold') : h('span.badge.ok', null, 'All sites workable'),
+          h('span.grow'),
+          flags.length && session.can('reviewAttendance') ? h('button.btn.sm.bad', {
+            onclick: function () {
+              ui.confirm('Stamp “' + flags.map(function (s) { return s.suggestedFlag; }).join(' / ') +
+                '” on every attendance mark recorded at these sites today? Supervisors see it when reviewing flags.').then(function (ok) {
+                  if (!ok) return;
+                  run(api.must('checkSiteWeather', { applyFlag: true }), 'Weather flag stamped on today\'s marks')
+                    .then(function (x) { if (x.success) loadSiteWeather(box); });
+                });
+            }
+          }, 'Apply flag to today\'s marks') : null
+        ].filter(Boolean)),
+        ui.table({
+          compact: true,
+          columns: [
+            { key: 'name', label: 'Site' },
+            { label: 'Rain', align: 'right', render: function (r) { return r.weather.rainMm + ' mm'; } },
+            { label: 'High', align: 'right', render: function (r) { return r.weather.maxTempC + ' °C'; } },
+            { label: 'Wind', align: 'right', render: function (r) { return r.weather.windKmph + ' km/h'; } },
+            {
+              label: 'Advice', render: function (r) {
+                return r.suggestedFlag
+                  ? ui.badge('Flagged', r.suggestedFlag + ' (rain ≥ ' + r.thresholdMm + ' mm)')
+                  : h('span.tiny.muted', null, 'work as usual');
+              }
+            }
+          ],
+          rows: sites,
+          emptyMessage: 'No active site has coordinates yet.'
+        })
+      ]));
+    });
+  }
 
   /* ------------------------------------------------------------ attendance */
   VIEWS.attendance = async function (el, param) {
@@ -621,6 +674,10 @@
         var editable = session.can('editProjects');
         var mapBox = h('div.map.sm');
         var teamBox = h('div.mt');
+        var liveBox = h('div.mt');
+        var qrBox = h('div', p.qrImageUrl ? [
+          h('img', { src: p.qrImageUrl, alt: 'QR', style: { width: '160px', borderRadius: '10px', background: '#fff', padding: '6px' } })
+        ] : [h('span.tiny.muted', null, 'No QR stored for this site yet — generate one below.')]);
 
         var m = ui.modal({
           wide: true,
@@ -638,20 +695,29 @@
                   ['Coordinates', p.lat && p.lng ? p.lat.toFixed(5) + ', ' + p.lng.toFixed(5) : 'not set'],
                   ['Shift', p.shiftId]
                 ]),
-                p.qrImageUrl ? h('div.mt', [
+                h('div.mt', [
                   h('h4', null, 'QR check-in code'),
-                  h('img', { src: p.qrImageUrl, alt: 'QR', style: { width: '160px', borderRadius: '10px', background: '#fff', padding: '6px' } }),
+                  qrBox,
+                  h('div.row.mt', { style: { gap: '6px' } }, [
+                    h('button.btn.sm', { onclick: function () { siteQrCode(p, qrBox, false, load); } }, '🖨 Print-ready QR'),
+                    editable ? h('button.btn.sm.ghost', { onclick: function () { siteQrCode(p, qrBox, true, load); } }, '↻ New code') : null
+                  ].filter(Boolean)),
                   h('div.tiny.muted.mt', null, 'Print and stick at the site gate — workers scan when GPS fails indoors.')
-                ]) : null
+                ])
               ]),
               h('div', [mapBox, h('div.tiny.muted.mt', null, 'Geofence radius shown as the dashed circle.')])
             ]),
             h('h3.mt', null, 'Assigned team'),
-            teamBox
+            teamBox,
+            h('h3.mt', null, 'On site today'),
+            liveBox
           ],
           actions: [
             editable ? {
               label: 'Edit project', kind: 'primary', onClick: function (close) { close(); editProject(p); }
+            } : null,
+            editable ? {
+              label: 'Set status', onClick: function () { setProjectStatus(p, load); }
             } : null,
             session.can('createEmployees') ? {
               label: 'Assign employee', onClick: function (close) { close(); assignEmployee(p); }
@@ -662,6 +728,7 @@
 
         if (p.lat && p.lng) ST.map.view(mapBox, { points: [{ lat: p.lat, lng: p.lng, label: '✓', popup: ui.esc(p.address || p.name) }], geofence: p.geofenceRadius, zoom: 16 });
 
+        loadLiveTeam(p.projectId, liveBox);
         api.must('listAssignments', { projectId: p.projectId, status: 'All' }).then(function (tr) {
           if (!tr.success) return ui.render(teamBox, h('div.err-box', null, tr.error.message));
           ui.render(teamBox, ui.table({
@@ -692,6 +759,90 @@
           }));
         });
       });
+    }
+
+    /** Who is physically on this site today — rolled up server-side. */
+    function loadLiveTeam(projectId, box) {
+      api.must('projectTeam', { projectId: projectId }).then(function (res) {
+        if (!res.success) return ui.render(box, h('div.err-box', null, res.error.message));
+        var d = res.data, tt = d.today || {};
+        ui.render(box, [
+          h('div.row.mt.tiny', { style: { gap: '8px', flexWrap: 'wrap', alignItems: 'center' } }, [
+            h('b', null, (tt.present || 0) + ' / ' + (tt.total || 0) + ' marked'),
+            h('span.chip', null, (tt.percentage || 0) + '% coverage')
+          ].concat(Object.keys(tt.counts || {}).filter(function (k) {
+            return k !== 'other' && tt.counts[k];
+          }).map(function (k) { return h('span.chip', null, k + ' ' + tt.counts[k]); }))),
+          ui.table({
+            compact: true,
+            columns: [
+              { key: 'name', label: 'Worker' },
+              { key: 'roleOnSite', label: 'Site role' },
+              {
+                label: 'Status', render: function (r) {
+                  return r.status === 'NotMarked' ? h('span.tiny.muted', null, 'no mark yet today') : ui.badge(r.status);
+                }
+              },
+              { label: 'In', render: function (r) { return r.markedAt ? ui.fmtTime(r.markedAt) : '—'; } },
+              { label: 'Out', render: function (r) { return r.markedOutAt ? ui.fmtTime(r.markedOutAt) : '—'; } },
+              { label: 'Distance', align: 'right', render: function (r) { return r.distance == null ? '—' : ui.dist(r.distance); } },
+              { label: 'Source', render: function (r) { return r.source ? h('span.tiny.muted', null, r.source) : ''; } }
+            ],
+            rows: d.members || [],
+            emptyMessage: 'No active assignments on this site.'
+          })
+        ]);
+      });
+    }
+
+    /** Active / OnHold / Completed — Completed also closes the end date. */
+    function setProjectStatus(p, reload) {
+      ui.promptFields('Project status — ' + p.name, [
+        {
+          name: 'status', label: 'Status', type: 'select', required: true, value: p.status,
+          options: [
+            { value: 'Active', label: 'Active — workers can mark attendance here' },
+            { value: 'OnHold', label: 'On hold — paused, history kept' },
+            { value: 'Completed', label: 'Completed — site closed' }
+          ],
+          hint: 'Only Active sites accept check-ins or feed the daily report and weather jobs.'
+        }
+      ], 'Save status').then(function (v) {
+        if (!v || v.status === p.status) return;
+        run(api.must('setProjectStatus', { projectId: p.projectId, status: v.status }), 'Site is now ' + v.status)
+          .then(function (x) { if (x.success) { invalidate('projects'); reload(); } });
+      });
+    }
+
+    /** Fetch (or rotate) the site QR and hand over a printable sheet. */
+    function siteQrCode(p, box, regenerate, reload) {
+      run(api.must('projectQrCode', { projectId: p.projectId, regenerate: !!regenerate }),
+        regenerate ? 'A fresh QR was issued — older prints stop working' : 'QR ready')
+        .then(function (res) {
+          if (!res.success) return;
+          var d = res.data;
+          if (box) {
+            ui.render(box, [
+              h('img', { src: d.imageUrl, alt: 'QR', style: { width: '160px', borderRadius: '10px', background: '#fff', padding: '6px' } }),
+              h('div.tiny.muted.mt', { style: { wordBreak: 'break-all' } }, d.payload)
+            ]);
+          }
+          var sheet = h('div', { style: { textAlign: 'center', padding: '12px' } }, [
+            h('h2', null, d.projectName),
+            h('img', { src: d.imageUrl, alt: 'Site QR', style: { width: '300px', background: '#fff', padding: '12px' } }),
+            h('p', null, 'Scan at the site office when GPS fails indoors'),
+            h('p.tiny.muted', { style: { wordBreak: 'break-all' } }, d.payload)
+          ]);
+          ui.modal({
+            title: 'Site gate QR — ' + d.projectName,
+            body: [sheet, h('div.hint.mt', null, d.printInstructions)],
+            actions: [
+              { label: 'Print sheet', kind: 'primary', onClick: function () { ui.printNode(sheet); } },
+              { label: 'Close', onClick: function (c) { c(); } }
+            ]
+          });
+          if (regenerate) { invalidate('projects'); if (reload) reload(); }
+        });
     }
 
     function editProject(p) {
@@ -1092,6 +1243,91 @@
     }
   };
 
+
+  /* ------------------------------------------------------- device registry */
+  VIEWS.devices = async function (el) {
+    var body = h('div');
+    var statusSel = h('select', null, ['All', 'Active', 'PendingChange', 'Blocked'].map(function (s) {
+      return h('option', null, s);
+    }));
+
+    async function load() {
+      ui.loading(body);
+      var st = statusSel.value === 'All' ? '' : statusSel.value;
+      var res = await api.must('listDeviceRegistry', st ? { status: st } : {});
+      if (!res.success) return ui.render(body, h('div.err-box', null, res.error.message));
+      var d = res.data;
+      var pending = (d.devices || []).filter(function (r) { return r.pendingFingerprint; }).length;
+      ui.render(body, [
+        h('div.stats', [
+          ui.statCard('Bound devices', d.count, 'one per worker account', 'accent'),
+          ui.statCard('Awaiting approval', pending, 'new-phone requests', pending ? 'warn' : 'good')
+        ]),
+        ui.table({
+          columns: [
+            { label: 'Employee', render: function (r) { return h('div', [h('b', null, r.userName || r.userId), h('div.tiny.muted', null, (r.role || '') + ' · ' + (r.mobile || ''))]); } },
+            { label: 'Device', render: function (r) { return h('div', [h('span', null, r.label || 'unnamed'), h('div.tiny.muted', null, r.userAgent || '')]); } },
+            { label: 'Fingerprint', render: function (r) { return h('span.tiny.muted', null, r.fingerprint); } },
+            {
+              label: 'Change requested', render: function (r) {
+                return r.pendingFingerprint
+                  ? h('div', [h('span.tiny', null, r.pendingFingerprint), h('div.tiny.muted', null, ui.ago(r.requestedAt))])
+                  : h('span.tiny.muted', null, 'none');
+              }
+            },
+            { label: 'Last used', render: function (r) { return r.lastUsedAt ? ui.ago(r.lastUsedAt) : 'never'; } },
+            { label: 'Logins', align: 'right', render: function (r) { return r.loginCount; } },
+            { label: 'Status', render: function (r) { return ui.badge(r.status); } },
+            {
+              label: '', render: function (r) {
+                var btns = [];
+                if (r.pendingFingerprint) {
+                  btns.push(h('button.btn.sm.primary', { onclick: function () { decideDevice('approve', r); } }, 'Approve'));
+                  btns.push(h('button.btn.sm.bad', { onclick: function () { decideDevice('reject', r); } }, 'Reject'));
+                }
+                btns.push(String(r.status) === 'Blocked'
+                  ? h('button.btn.sm', { onclick: function () { toggleBlock(r, false); } }, 'Unblock')
+                  : h('button.btn.sm.ghost', { onclick: function () { toggleBlock(r, true); } }, 'Block'));
+                return h('div.row', { style: { gap: '6px' } }, btns);
+              }
+            }
+          ],
+          rows: d.devices || [],
+          emptyMessage: 'Nothing here yet — a device is bound the first time a worker signs in.'
+        })
+      ]);
+    }
+
+    function decideDevice(decision, r) {
+      run(api.must('approveDeviceChange', {
+        deviceId: r.deviceId, decision: decision, note: 'Handled in the device registry'
+      }), decision === 'approve' ? 'Device bound — ' + (r.userName || r.userId) + ' can mark attendance' : 'Device change rejected')
+        .then(function (x) { if (x.success) load(); });
+    }
+
+    function toggleBlock(r, blocked) {
+      ui.promptFields(blocked ? 'Block this device' : 'Unblock this device', [
+        {
+          name: 'reason', label: 'Reason (kept in the audit log)', type: 'textarea', required: blocked,
+          value: blocked ? 'Phone lost or stolen' : 'Returned to service',
+          hint: 'While blocked this worker cannot sign in or mark attendance from that device.'
+        }
+      ], blocked ? 'Block device' : 'Unblock device').then(function (v) {
+        if (!v) return;
+        run(api.must('blockDevice', { deviceId: r.deviceId, blocked: blocked, reason: String(v.reason).slice(0, 200) }),
+          blocked ? 'Device blocked' : 'Device unblocked').then(function (x) { if (x.success) load(); });
+      });
+    }
+
+    ui.render(el, [
+      sectionHead('Device registry', 'Every phone bound to an account — approve new ones, block lost or shared ones', [
+        statusSel, h('button.btn.sm', { onclick: load }, 'Apply')
+      ]),
+      body
+    ]);
+    load();
+  };
+
   /* ------------------------------------------------------- leave/expenses */
   function requestList(section) {
     return async function (el) {
@@ -1115,6 +1351,7 @@
             { key: 'reason', label: 'Reason' },
             { label: 'Status', render: function (r) { return ui.badge(r.status); } },
             { label: 'Decision', render: function (r) { return r.reviewNote || r.approvedBy || '—'; } },
+            canceller(rows, load),
             decider(cfg, rows, load)
           ] : section === 'expense' ? [
             { key: 'userName', label: 'Employee' },
@@ -1142,6 +1379,25 @@
         body
       ]);
       load();
+    };
+  }
+
+  /** A worker may withdraw their own pending leave; staff may do it on their behalf. */
+  function canceller(rows, reload) {
+    return {
+      label: '', render: function (r) {
+        if (String(r.status) !== 'Pending') return null;
+        var mine = String(r.userId) === String((session.user || {}).userId || '');
+        if (!mine && !session.can('approveLeave')) return null;
+        return h('button.btn.sm.ghost', {
+          onclick: function () {
+            ui.confirm('Cancel this leave request? It leaves the approval queue.').then(function (ok) {
+              if (!ok) return;
+              run(api.must('cancelLeave', { leaveId: r.leaveId }), 'Leave cancelled').then(function (x) { if (x.success) reload(); });
+            });
+          }
+        }, 'Cancel');
+      }
     };
   }
 
@@ -1187,7 +1443,24 @@
           { label: 'Rate/head', align: 'right', render: function (r) { return ST.i18n.money(r.ratePerHead || 0); } },
           { label: 'Workers', align: 'right', render: function (r) { return r.workerCount; } },
           { label: 'Status', render: function (r) { return ui.badge(r.status); } },
-          { label: '', render: function (r) { return h('button.btn.sm.ghost', { onclick: function () { editVendor(r); } }, 'Edit'); } }
+          {
+            label: '', render: function (r) {
+              return h('div.row', { style: { gap: '6px' } }, [
+                h('button.btn.sm.ghost', { onclick: function () { editVendor(r); } }, 'Edit'),
+                session.can('manageVendors') ? h('button.btn.sm.' + (r.status === 'Active' ? 'bad' : 'primary'), {
+                  onclick: function () {
+                    var next = r.status === 'Active' ? 'Inactive' : 'Active';
+                    ui.confirm('Mark ' + r.vendorName + ' as ' + next + '? ' +
+                      (next === 'Inactive' ? 'They cannot be assigned to a site while inactive.' : 'They can be assigned to sites again.')).then(function (ok) {
+                        if (!ok) return;
+                        run(api.must('setVendorStatus', { vendorId: r.vendorId, status: next }), 'Vendor ' + next.toLowerCase())
+                          .then(function (x) { if (x.success) load(); });
+                      });
+                  }
+                }, r.status === 'Active' ? 'Disable' : 'Enable') : null
+              ].filter(Boolean));
+            }
+          }
         ],
         rows: res.data.vendors || [],
         emptyMessage: 'No vendors registered.'
@@ -1347,13 +1620,16 @@
             { label: 'File', render: function (r) { return r.fileId ? h('button.btn.sm.ghost', { onclick: function () { openSelfie(r.fileId); } }, '👁') : '—'; } },
             session.can('manageDocuments') ? {
               label: '', render: function (r) {
-                return h('button.btn.sm.bad', {
+                return h('div.row', { style: { gap: '6px' } }, [
+                  h('button.btn.sm.ghost', { onclick: function () { editDocument(r); } }, 'Edit'),
+                  h('button.btn.sm.bad', {
                   onclick: function () {
                     ui.confirm('Delete this document record?').then(function (ok) {
                       if (ok) run(api.must('deleteDocument', { docId: r.docId }), 'Deleted').then(function (x) { if (x.success) load(); });
                     });
                   }
-                }, 'Delete');
+                }, 'Delete')
+                ].filter(Boolean));
               }
             } : null
           ].filter(Boolean),
@@ -1361,6 +1637,30 @@
           emptyMessage: 'No documents uploaded yet.'
         })
       ]);
+    }
+
+    function editDocument(doc) {
+      enums().then(function (en) {
+        ui.promptFields('Update ' + (doc.docType || 'document'), [
+          { name: 'docType', label: 'Document type', type: 'select', options: en.docTypes || [], value: doc.docType },
+          { name: 'expiryDate', label: 'Expiry date', type: 'date', value: doc.expiryDate || '', hint: 'Leave blank for a document that never expires.' },
+          { name: 'expiryAlertDays', label: 'Warn this many days before expiry', type: 'number', value: String(doc.expiryAlertDays || 15) },
+          {
+            name: 'status', label: 'Status', type: 'select', value: doc.status || 'Valid',
+            options: ['Valid', 'ExpiringSoon', 'Expired', 'Rejected'].map(function (s) { return { value: s, label: s }; }),
+            hint: 'Rejected is for unreadable copies or the wrong document; the worker is told to upload again.'
+          },
+          { name: 'notes', label: 'Notes', type: 'textarea', value: doc.notes || '' }
+        ], 'Save document').then(function (v) {
+          if (!v) return;
+          var payload = {
+            docId: doc.docId, expiryDate: v.expiryDate || '', status: v.status,
+            notes: v.notes, expiryAlertDays: Number(v.expiryAlertDays || 15)
+          };
+          if (v.docType && v.docType !== doc.docType) payload.docType = v.docType;
+          run(api.must('updateDocument', payload), 'Document updated').then(function (x) { if (x.success) load(); });
+        });
+      });
     }
 
     function upload(forUserId) {
@@ -1736,7 +2036,7 @@
           workingDays: h('input', { value: s.workingDays, disabled: !canGeo }),
           weeklyOff: h('input', { value: s.weeklyOff, disabled: !canGeo }),
           paidHolidays: h('select', { disabled: !canGeo }, [h('option', { value: 'Y', selected: s.paidHolidays !== 'N' }, 'Paid'), h('option', { value: 'N', selected: s.paidHolidays === 'N' }, 'Unpaid')]),
-          payrollDay: h('input', { type: 'number', value: s.payrollDay || 1, disabled: !canGeo })
+          payrollDaysBasis: h('input', { type: 'number', min: 1, max: 31, value: s.payrollDaysBasis || 26, disabled: !canGeo })
         };
         ui.render(pane, h('div.card', [
           h('h3', null, 'Attendance, hours & overtime'),
@@ -1746,7 +2046,7 @@
           ]),
           h('div.grid.c2', [
             h('div.field', [h('label', null, 'Late grace (minutes)'), f2.lateGraceMinutes]),
-            h('div.field', [h('label', null, 'Payroll day of month'), f2.payrollDay])
+            h('div.field', [h('label', null, 'Payroll days per month (÷ for salary)'), f2.payrollDaysBasis])
           ]),
           h('div.grid.c2', [
             h('div.field', [h('label', null, 'Mark-out window'), h('div.row', null, [f2.outWindowStart, f2.outWindowEnd])]),
@@ -1771,7 +2071,7 @@
               standardHours: f2.standardHours.value, halfDayHours: f2.halfDayHours.value,
               overtimeAfterHours: f2.overtimeAfterHours.value, overtimeRate: f2.overtimeRate.value,
               workingDays: f2.workingDays.value, weeklyOff: f2.weeklyOff.value,
-              paidHolidays: f2.paidHolidays.value, payrollDay: f2.payrollDay.value
+              paidHolidays: f2.paidHolidays.value, payrollDaysBasis: f2.payrollDaysBasis.value
             };
           }) : h('p.hint.mt', null, 'You need the manageGeofence permission to edit these rules.')
         ]));
@@ -1780,7 +2080,7 @@
       if (which === 'geo') {
         var f3 = {
           defaultGeofenceRadius: h('input', { type: 'number', value: s.defaultGeofenceRadius, disabled: !canGeo }),
-          maxGpsAccuracy: h('input', { type: 'number', value: s.maxGpsAccuracy || 80, disabled: !canGeo }),
+          maxGpsAccuracy: h('input', { type: 'number', value: s.maxGpsAccuracy || 500, disabled: !canGeo }),
           requireSelfie: h('input', { type: 'checkbox', checked: s.requireSelfie !== 'N', disabled: !canGeo }),
           requireDeviceBinding: h('input', { type: 'checkbox', checked: s.requireDeviceBinding !== 'N', disabled: !canGeo }),
           allowQrFallback: h('input', { type: 'checkbox', checked: s.allowQrFallback !== 'N', disabled: !canGeo }),
@@ -2011,7 +2311,15 @@
           ui.kvList([
             ['User ID', u.userId || u.UserID], ['Mobile', u.mobile || u.MobileNumber], ['Email', u.email || u.Email],
             ['Joined', ui.fmtDate(u.joinedAt || u.JoinedAt)], ['Device status', ui.badge(u.deviceStatus || u.DeviceStatus || 'Unbound')],
-            ['Salary', (u.salaryType || u.SalaryType) + ' · ' + ST.i18n.money(u.dailyWage || u.DailyWage || 0) + '/day']
+            ['Salary', (u.salaryType || u.SalaryType) + ' · ' + ST.i18n.money(u.dailyWage || u.DailyWage || 0) + '/day'],
+            ['Address', u.address || u.Address || ''], ['Emergency contact', u.emergencyContact || u.EmergencyContact || ''],
+            ['Weekly off', (['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][
+              Number(u.weeklyOff !== undefined ? u.weeklyOff : u.WeeklyOff)
+            ]) || '—']
+          ]),
+          h('div.row.mt', { style: { gap: '8px' } }, [
+            h('button.btn.sm.primary', { onclick: function () { editMyProfile(u, function () { VIEWS.profile(el); }); } }, 'Edit my details'),
+            h('button.btn.sm', { onclick: function () { requestMyDevice(el); } }, '📱 Register this browser/phone')
           ]),
           h('h4.mt', null, 'Change password'),
           (function () {
@@ -2041,7 +2349,8 @@
             rows: me.devices || [],
             emptyMessage: 'No devices bound yet — your next sign-in binds this one.'
           }),
-          h('p.hint.mt', null, 'Moving to a new phone? Sign in there once — an approval request is sent to your admin automatically.'),
+          h('p.hint.mt', null, 'Moving to a new phone? Sign in there once — an approval request reaches your admin automatically. '
+            + 'On a shared desktop, use “Register this browser/phone” above instead.'),
           h('h3.mt', null, 'My assignments'),
           ui.table({
             compact: true,
@@ -2053,6 +2362,69 @@
       ])
     ]);
   };
+
+  /** Staff can fix their own contact and bank details without an HR round-trip. */
+  function editMyProfile(u, done) {
+    ui.promptFields('Edit my details', [
+      { name: 'name', label: 'Full name', required: true, value: u.name || u.Name || '' },
+      { name: 'designation', label: 'Designation', value: u.designation || u.Designation || '' },
+      { name: 'address', label: 'Address', type: 'textarea', value: u.address || u.Address || '' },
+      {
+        name: 'emergencyContact', label: 'Emergency contact', value: u.emergencyContact || u.EmergencyContact || '',
+        hint: 'Digits with + ( ) - and spaces, 6–20 characters'
+      },
+      {
+        name: 'weeklyOff', label: 'Weekly off', type: 'select',
+        value: String(u.weeklyOff !== undefined ? u.weeklyOff : (u.WeeklyOff !== undefined ? u.WeeklyOff : '0')),
+        options: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map(function (d, i) {
+          return { value: String(i), label: d };
+        })
+      },
+      { name: 'bankAccount', label: 'Bank account', value: u.bankAccount || u.BankAccount || '', hint: 'Private field — only you and Super Admins read it back' },
+      { name: 'ifscCode', label: 'IFSC', value: u.ifscCode || u.IfscCode || '' }
+    ], 'Save my details').then(function (v) {
+      if (!v) return;
+      function current(key) {
+        var camel = u[key];
+        var pascal = u[key.charAt(0).toUpperCase() + key.slice(1)];
+        return String(camel !== undefined ? camel : (pascal !== undefined ? pascal : '')).trim();
+      }
+      var payload = {};
+      ['name', 'designation', 'address', 'emergencyContact', 'bankAccount', 'ifscCode', 'weeklyOff'].forEach(function (k) {
+        var next = String(v[k] == null ? '' : v[k]).trim();
+        if (next && next !== current(k)) payload[k] = next;
+      });
+      if (!Object.keys(payload).length) return ui.toast('Nothing to save — no field changed', 'warn');
+      run(api.must('updateMyProfile', payload), 'My profile updated').then(function (r) {
+        if (!r.success) return;
+        invalidate('users');   // the profile re-render refetches `me`, so no local patching
+        if (done) done();
+      });
+    });
+  }
+
+  /**
+   * Binds the browser you are reading this in. Signing in from a new phone files
+   * a request automatically; this is the deliberate path for desk machines and
+   * for admins who want the request in front of them.
+   */
+  function requestMyDevice(el) {
+    var fp = api.device.fingerprint ? api.device.fingerprint() : '';
+    if (!fp || fp.length < 8) return ui.toast('This browser cannot produce a device fingerprint', 'bad');
+    ui.promptFields('Register this device', [
+      {
+        name: 'label', label: 'Device name', required: true,
+        value: api.device.label ? String(api.device.label()).slice(0, 60) : 'Desk browser',
+        hint: 'Shown to whoever approves the request'
+      }
+    ], 'Send request').then(function (v) {
+      if (!v) return;
+      run(api.must('requestDeviceChange', { deviceFingerprint: fp, deviceLabel: String(v.label).slice(0, 60) }),
+        'Request filed — it appears in Devices for approval').then(function (r) {
+          if (r.success) VIEWS.profile(el);
+        });
+    });
+  }
 
   /* ========================================================= setup wizard */
   function openSetupWizard() {
