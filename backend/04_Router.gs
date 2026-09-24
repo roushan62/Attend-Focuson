@@ -151,6 +151,11 @@ function doGet(e) {
   var params = {};
   if (e && e.parameter) for (var k in e.parameter) params[k] = e.parameter[k];
 
+  // ?page=… → serve the full frontend (index, login, signup, app, mobile, owner, status)
+  if (params.page !== undefined || (!params.action && typeof servePage_ === 'function')) {
+    return servePage_(params.page || '');
+  }
+
   // A plain browser hit with no ?action → tiny self-documenting landing page.
   if (!params.action) {
     return HtmlService.createHtmlOutput(landingHtml_())
