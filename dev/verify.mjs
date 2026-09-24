@@ -373,6 +373,57 @@ section('Static assets', () => {
   else info(`${files.length} frontend files, none orphaned`);
 });
 
+/* ------------------------------------ 5b. Apps Script-served frontend ---- */
+section('Apps Script frontend (same /exec URL, no external host)', () => {
+  // 1. The editor HTML files must mirror the static frontend byte-for-byte,
+  //    otherwise the two frontends drift apart silently.
+  //    JS files use dots in frontend/ (api.js) and underscores in the editor
+  //    file names (api_js.html).
+  const mirrorPairs = [
+    ['backend/app_css.html', 'frontend/assets/css/app.css'],
+    ...['api', 'i18n', 'ui', 'map', 'admin', 'mobile', 'owner']
+      .map((n) => ['backend/' + n + '_js.html', 'frontend/assets/js/' + n + '.js'])
+  ];
+  mirrorPairs.forEach(([b, f]) => {
+    if (!exists(b)) return fail('gas frontend', `${b} is missing`);
+    if (!exists(f)) return fail('gas frontend', `${f} is missing`);
+    if (read(b) !== read(f)) {
+      fail('gas frontend', `${b} has drifted from ${f} — they must stay identical (copy the newer over the older)`);
+    }
+  });
+
+  // 2. Every file a template includes must exist as an Apps Script HTML file.
+  const backendHtml = fs.readdirSync(BACKEND_DIR).filter((f) => f.endsWith('.html'));
+  const includeNames = new Set();
+  backendHtml.forEach((f) => {
+    const src = fs.readFileSync(path.join(BACKEND_DIR, f), 'utf8');
+    for (const m of src.matchAll(/include(?:Css|Js|File)_\('([^']+)'\)/g)) includeNames.add(m[1]);
+  });
+  includeNames.forEach((n) => {
+    if (!backendHtml.includes(n + '.html')) fail('gas frontend', `templates include '${n}' but backend/${n}.html does not exist`);
+  });
+
+  // 3. servePage_ must route only to files that exist, and no template may be orphaned.
+  const routerSrc = read('backend/22_Frontend.gs');
+  const routed = new Set([...routerSrc.matchAll(/'(tmpl_[a-z]+)'/g)].map((m) => m[1]));
+  routed.forEach((n) => {
+    if (!backendHtml.includes(n + '.html')) fail('gas frontend', `servePage_ routes to ${n} but backend/${n}.html is missing`);
+  });
+  backendHtml.filter((f) => /^tmpl_/.test(f) && !routed.has(f.replace(/\.html$/, '')) &&
+    !includeNames.has(f.replace(/\.html$/, '')))
+    .forEach((f) => fail('gas frontend', `backend/${f} is not reachable from servePage_ (orphaned page)`));
+
+  // 4. On the GAS path the API URL must resolve itself — no manual config.
+  if (!exists('backend/tmpl_config_js.html')) fail('gas frontend', 'backend/tmpl_config_js.html missing');
+  else {
+    const cfg = read('backend/tmpl_config_js.html');
+    if (!/ScriptApp\.getService\(\)\.getUrl\(\)/.test(cfg) || !/API_URL:\s*scriptUrl/.test(cfg)) {
+      fail('gas frontend', 'tmpl_config_js.html must set API_URL from ScriptApp.getService().getUrl() (auto-detect)');
+    }
+  }
+  info(`${mirrorPairs.length} asset mirrors · ${includeNames.size} include targets · ${routed.size} routed pages`);
+});
+
 /* ------------------------------------------------------------------ 6. i18n */
 section('i18n (English / हिंदी)', () => {
   const src = read('frontend/assets/js/i18n.js');
@@ -439,6 +490,7 @@ section('Zero demo data & no debug leftovers', () => {
     [/\bdebugger\b/, 'a debugger statement']
   ];
   const shipped = [...sources.map((s) => 'backend/' + s.file), 'backend/appsscript.json',
+    ...fs.readdirSync(BACKEND_DIR).filter((f) => f.endsWith('.html')).map((f) => 'backend/' + f),
     ...PAGES.map((p) => 'frontend/' + p), ...JS_FILES.map((f) => 'frontend/assets/js/' + f),
     'frontend/assets/css/app.css', 'frontend/config.js', 'frontend/sw.js', 'frontend/manifest.webmanifest'];
   for (const rel of shipped) {
@@ -487,6 +539,21 @@ section('Documentation sync', () => {
     .map((m) => m[1].replace(/\/$/, ''))
     .filter((p) => p.includes('.') && !p.endsWith('/') && !/^dev\/data(-test)?\//.test(p))
     .forEach((p) => { if (!exists(p)) fail('README', `references ${p} which is not in the repo`); });
+
+  // docs/SETUP.md is the copy-paste contract: it must list EVERY editor file.
+  if (!exists('docs/SETUP.md')) fail('docs/SETUP.md', 'missing — the copy-paste install guide is required');
+  else {
+    const setup = read('docs/SETUP.md');
+    const editorFiles = [...sources.map((s) => s.file),
+      ...fs.readdirSync(BACKEND_DIR).filter((f) => f.endsWith('.html'))];
+    // Accept either the repo name (01_Utils.gs) or the editor name (01_Utils).
+    const missing = editorFiles.filter((f) => {
+      const stem = f.replace(/\.gs$/, '').replace(/\.html$/, '');
+      return !setup.includes(f) && !setup.includes('`' + stem + '`');
+    });
+    if (missing.length) fail('docs/SETUP.md', 'checklist does not mention: ' + missing.join(', '));
+    info(`docs/SETUP.md lists all ${editorFiles.length} editor files`);
+  }
   info(`${names.length} actions, ${docRows.size} documented in API.md`);
 });
 

@@ -1,19 +1,22 @@
 # SiteTrack — Construction Site Live Attendance & Workforce Management
 
-**A complete, free, multi-tenant SaaS built on Google Sheets (database) + Google Apps Script
-(API) with a static HTML/CSS/JS frontend.** GPS-geofenced attendance with live selfies, device
+**A complete, free, multi-tenant SaaS that runs 100 % inside Google Sheets + Google Apps
+Script — frontend AND backend, one `/exec` URL, zero external hosting.** No GitHub, no
+Vercel, no Netlify, no domain, no build step: you copy-paste 40 files into the Apps Script
+editor and the software is live. GPS-geofenced attendance with live selfies, device
 binding, an offline-first worker PWA, approvals, sub-vendor manpower, a document vault,
 payroll-ready reports and a full audit trail.
 
-> 📖 **The full manual is [docs/GUIDE.md](docs/GUIDE.md)** — the guide book: installation,
-> configuration, one chapter per role, the rules the engine applies, every setting, the
-> troubleshooting matrix and the data model. This README is the 15-minute quick start.
+> 📖 **Install it → [docs/SETUP.md](docs/SETUP.md)** — the step-by-step copy-paste checklist
+> (every file, every click, verification, troubleshooting). **Full manual →
+> [docs/GUIDE.md](docs/GUIDE.md)** — one chapter per role, the rules the engine applies,
+> every setting, the troubleshooting matrix and the data model.
 
 | Layer | Technology | Cost |
 |---|---|---|
 | Database | Google Sheets — one spreadsheet per company + one Platform Master | Google free quota |
 | Backend / API | Google Apps Script Web App — 99 JSON actions, server-side permissions | Google free quota |
-| Frontend | Static HTML/CSS/JS — GitHub Pages (or Netlify/Vercel/any host) | free tier |
+| Frontend | **Served by the same Apps Script web app** (16 HTML files, `?page=…`) | Google free quota |
 | Files | Google Drive, private per-company folder tree | Google free quota |
 | Mail / OTP | Gmail (`MailApp`) + optional WhatsApp Cloud API | free |
 | Maps | OpenStreetMap tiles + browser Geolocation API | free, no API key |
@@ -50,7 +53,7 @@ shipped code.
 ## 2. Layout
 
 ```
-backend/             Google Apps Script project = the whole API (22 files)
+backend/             Google Apps Script project = the whole product (23 script + 16 HTML files)
   00_Config.gs         enums, 23 permissions, 43 settings defaults, sheet schemas, property keys
   01_Utils.gs          pure helpers (dates, ids, Haversine, validation)
   02_Store.gs          spreadsheet I/O, company workbook lifecycle, audit writer
@@ -68,78 +71,103 @@ backend/             Google Apps Script project = the whole API (22 files)
   19_Triggers.gs       5 scheduled jobs + installer
   20_Bootstrap.gs      setupScript() + diagnoseDeployment()
   21_Files.gs          Drive upload/download, token-gated file access
+  22_Frontend.gs       serves every HTML page from the same /exec URL (page router + includes)
   appsscript.json      manifest (scopes, timezone, web-app config)
 
-frontend/            static web app (any static host)
-  index.html signup.html status.html login.html     public pages + staff sign-in
-  app.html                 staff console (SPA: dashboard → audit)
-  mobile.html              worker PWA (offline-first, EN/HI)
-  owner.html               hidden platform-owner panel
-  config.js                the ONLY file you edit: API_URL, branding, feature flags
-  assets/css, assets/js    design system + api/i18n/ui/map/admin/mobile/owner
-  manifest.webmanifest sw.js favicon.svg assets/icons/
+  tmpl_index tmpl_login tmpl_signup tmpl_status     website, sign-in, signup, tracker
+  tmpl_app tmpl_mobile tmpl_owner                   staff console, worker app (EN/HI), owner panel
+  app_css tmpl_config_js i18n_js api_js ui_js       design system, auto API URL, strings, API
+  map_js admin_js mobile_js owner_js                live map + the three app shells
+  (all .html files — each one is an "HTML" file in the Apps Script editor; see docs/SETUP.md)
+
+frontend/            OPTIONAL byte-identical mirror of the same UI for a static host
+  index.html signup.html status.html login.html     (not required to run — npm run verify keeps
+  app.html mobile.html owner.html                    backend/*.html and these in sync)
+  config.js assets/css assets/js manifest sw.js icons/
 
 dev/                 local harness (never deployed, zero npm dependencies)
-  gas/polyfill.mjs     Apps Script service polyfills for Node
+  gas/polyfill.mjs     Apps Script service polyfills + a real HTML template engine for Node
   gas/loader.mjs       loads backend/*.gs into a Node VM
   server.mjs           static server + /api proxy (bootstraps an EMPTY platform)
-  smoke-test.mjs       166-check end-to-end suite against the real backend code
+  smoke-test.mjs       200+-check end-to-end suite: API + every frontend page rendered by doGet
   verify.mjs           consistency checks: router↔code↔docs↔frontend callers↔ST.* namespace
-                       exports↔assets↔i18n↔"no demo data"
-docs/                GUIDE.md (guide book) · API.md (action reference) · ARCHITECTURE.md
+                       exports↔assets↔i18n↔mirrors↔"no demo data"↔SETUP checklist
+docs/                SETUP.md (copy-paste install) · GUIDE.md (guide book) · API.md · ARCHITECTURE.md
 scripts/make-icons.mjs   dependency-free PWA icon generator
-deploy/github-pages.workflow.yml   publish frontend/ with GitHub Actions
+deploy/github-pages.workflow.yml   OPTIONAL publish of frontend/ with GitHub Actions
+hrms/                legacy FocusHR experiment — not part of SiteTrack, safe to ignore
 ```
 
 ---
 
-## 3. Backend — 15 minutes
+## 3. Install — copy-paste into Apps Script (≈ 20 minutes)
 
-1. [script.google.com](https://script.google.com) → **New project** → `SiteTrack API`.
+> Full checklist with every file: **[docs/SETUP.md](docs/SETUP.md)**. Summary:
+
+1. [sheets.new](https://sheets.new) → new Sheet → **Extensions → Apps Script** → rename the
+   project `SiteTrack`. (script.google.com → New project works too.)
 2. **Project settings →** show `appsscript.json`, paste [`backend/appsscript.json`](backend/appsscript.json)
    (scopes, `Asia/Kolkata`, web-app config).
-3. Delete `Code.gs`; create one `.gs` file per file in `backend/` (same names, paste contents).
-   With clasp: copy `.clasp.json.example` → `.clasp.json`, set `scriptId`, then `clasp push`.
-4. Select **`setupScript`** → **▶ Run** → authorise. It creates the Platform Master (4 tabs), the
+3. Delete `Code.gs`; create one **Script** file per `.gs` file in [`backend/`](backend/)
+   (same name, paste contents) — 23 files, `00_Config` … `22_Frontend`.
+4. Create 16 **HTML** files (type **+ → HTML**, name *without* `.html`): the 7 pages
+   `tmpl_index`, `tmpl_login`, `tmpl_signup`, `tmpl_status`, `tmpl_app`, `tmpl_mobile`,
+   `tmpl_owner` and the 9 assets `app_css`, `tmpl_config_js`, `i18n_js`, `api_js`, `ui_js`,
+   `map_js`, `admin_js`, `mobile_js`, `owner_js` — contents from the same-named files in
+   `backend/`. **These 16 files ARE the frontend** — website, staff console, worker app and
+   owner panel are all served by the same web app.
+5. Select **`setupScript`** → **▶ Run** → authorise. It creates the Platform Master (4 tabs), the
    `SiteTrack` Drive root, and generates `OWNER_KEY` + `TOKEN_SECRET`; then it installs the five
    triggers and prints the owner key **once** — store it now, it is never returned again.
-5. **Project settings → Script properties:** `OWNER_EMAIL` = your e-mail, `DEV_MODE` = `false`.
+6. **Project settings → Script properties:** `OWNER_EMAIL` = your e-mail, `DEV_MODE` = `false`.
    Optional: `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_ID`, `MAPS_API_KEY`, `WEATHER_ENABLED`,
    `MAIL_FROM_NAME`, `SELFIE_MAX_BYTES`.
-6. Run **`diagnoseDeployment`** once — it reports structure, secret presence (never values),
+7. Run **`diagnoseDeployment`** once — it reports structure, secret presence (never values),
    tenant integrity and trigger coverage.
-7. **Deploy → New deployment → Web app** · *Execute as:* **Me** · *Who has access:* **Anyone** ·
-   copy the `/exec` URL → that is your `API_URL`.
-8. Check: `<API_URL>?action=ping` returns JSON with `"actions": 99` and `"configured": true`;
-   `?action=health` should be all `true`.
+8. **Deploy → New deployment → Web app** · *Execute as:* **Me** · *Who has access:* **Anyone** ·
+   copy the `/exec` URL — that is the whole software.
+9. Check: `<URL>?action=ping` returns JSON with `"actions": 99` and `"configured": true`;
+   `<URL>` itself opens the website; `?action=health` should be all `true`.
 
-> **After every backend change:** Deploy → **Manage deployments** → ✏️ → **New version**.
+> **After every change:** Deploy → **Manage deployments** → ✏️ → **New version**.
 > Apps Script never auto-updates an `/exec` URL.
+
+### 3.1 The one-URL rule
+
+| Link | Screen |
+|---|---|
+| `<URL>` | public website |
+| `<URL>?page=login` · `?page=signup` · `?page=status` | sign-in · registration · tracker |
+| `<URL>?page=app` | staff console (admin / sub-admin) |
+| `<URL>?page=mobile` | worker app (phones: Chrome menu → **Add to Home screen**) |
+| `<URL>?page=owner` | platform-owner panel (asks for the owner key) |
+| `<URL>?action=ping` / `?action=health` | API self-test |
+
+The frontend finds its own API automatically (`ScriptApp.getService().getUrl()` in
+`backend/tmpl_config_js.html`) — there is no `API_URL` to configure on this path.
 
 ---
 
-## 4. Frontend — 10 minutes
+## 4. Optional: static mirror (NOT required)
 
-1. `frontend/config.js`:
-   ```js
-   API_URL: 'https://script.google.com/macros/s/AKfycb…/exec',
-   OWNER_KEY: '',   // keep BLANK in a published build; owner.html asks for it at runtime
-   ```
-   Runtime overrides while testing: `?api=<url>` on any page, or `ST.api.setApiUrl('…')`.
-2. Publish `frontend/` as the site root:
-   * **GitHub Pages:** `cp deploy/github-pages.workflow.yml .github/workflows/pages.yml`, commit it
-     from your own machine (GitHub blocks workflow files pushed by app tokens), then
-     **Settings → Pages → Source: GitHub Actions**.
-   * **Netlify / Vercel / S3 / drag-and-drop:** point the publish directory at `frontend/`. No build.
-3. Worker phones: open `mobile.html` → Chrome menu → **Add to Home screen**. `sw.js` caches the
-   shell, so the app opens offline and queued attendance syncs when the signal returns.
+The product is complete after step 3 — **no GitHub, Netlify, Vercel or any other host is
+needed**. Only if you want the same UI on a custom domain: publish `frontend/` on any static
+host, set `API_URL` in `frontend/config.js` to your `/exec` URL, leave `OWNER_KEY` blank
+(`?page=owner` asks for it at runtime). `npm run verify` keeps `frontend/` byte-identical to
+the `backend/*.html` files. Runtime overrides while testing: `?api=<url>` or
+`ST.api.setApiUrl('…')`.
+
+Worker phones on the pure Apps Script path: open `?page=mobile` → Chrome menu → **Add to
+Home screen**. Offline attendance still queues on the device (`sitetrack.offlineQueue`) and
+replays when the signal returns — validated against the *captured* timestamp, not the sync
+time.
 
 ### 4.1 Local development (no Google account needed)
 
 ```bash
 npm run dev        # http://localhost:8080  — serves frontend/ and proxies /api to the real backend
-npm test           # 166 end-to-end checks against backend/*.gs on Node polyfills
-npm run verify     # static checks (router↔code↔docs↔every action has a UI caller↔no demo data)
+npm test           # 200+ end-to-end checks: API + every page rendered by doGet (backend/*.gs on Node polyfills)
+npm run verify     # static checks (router↔code↔docs↔every action has a UI caller↔mirrors↔no demo data)
 npm run check      # verify + test
 npm run icons      # regenerate the PWA icons
 npm run clean      # delete the local harness state
@@ -156,18 +184,18 @@ also visible at `/dev/state`). No accounts, no passwords, no seeded rows. Inspec
 
 ## 5. First company (this is the only way one can exist)
 
-1. `signup.html` → details → **Send OTP** (e-mail; also SMS/WhatsApp if configured) → the 6-digit
+1. `?page=signup` → details → **Send OTP** (e-mail; also SMS/WhatsApp if configured) → the 6-digit
    code is confirmed live by `verifyOtp` → submit. Status becomes `Pending`; you get a `REQ-…` id.
-2. `owner.html` (not linked anywhere) → paste the owner key → **Signup requests** → **Approve**:
+2. `?page=owner` (never linked anywhere) → paste the owner key → **Signup requests** → **Approve**:
    creates `SiteTrack — <Company>` with all 17 tabs, the private folder tree
    `SiteTrack/SiteTrack-<CompanyID>/{Selfies,Documents,Expenses,VendorPhotos,Reports,Temp}`, the
    registry row, and the **Super Admin** (temp password e-mailed).
-3. `login.html` → sign in → set a new password (≥ 8 chars, letter + number) → finish the
+3. `?page=login` → sign in → set a new password (≥ 8 chars, letter + number) → finish the
    **setup wizard**: profile/address → geofence 200 m, selfie + device rules → window 06:00–11:00,
    cutoff 11:00, grace 15 min → working days and weekly off.
 4. Add projects (pin on the map or paste coordinates; print the QR), add employees, assign teams.
-   Workers mark attendance inside the fence with a live selfie.
-5. Track any application publicly at `status.html?requestId=REQ-…`.
+   Workers mark attendance inside the fence with a live selfie from `?page=mobile`.
+5. Track any application publicly at `?page=status&requestId=REQ-…`.
 
 ---
 
@@ -213,7 +241,7 @@ Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · every action and payloa
 | SMS | any HTTP gateway: extend `sendSmsOrWhatsApp_()` in `backend/17_Notifications.gs` |
 | Geocoding | `MAPS_API_KEY` (otherwise the free Open-Meteo geocoder is used) |
 | Weather flagging | `WEATHER_ENABLED=true` + `autoRainDayFlag`, `rainThresholdMm`, `heatThresholdC` |
-| Custom domain | point it at Pages/Netlify and keep `API_URL` absolute |
+| Custom domain | optional static mirror of `frontend/` (see §4); the API always stays on the Apps Script URL |
 
 ---
 
@@ -234,8 +262,9 @@ Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · every action and payloa
 
 | Symptom | Fix |
 |---|---|
-| `ping` returns an HTML login page | redeploy with *Anyone* access + *Execute as: Me* |
-| “Cannot reach SiteTrack API” | `API_URL` wrong/empty, or no new deployment version after a change |
+| `ping` returns an HTML page | redeploy with *Anyone* access + *Execute as: Me* |
+| Page says “setup incomplete — missing file X” | create that HTML file (docs/SETUP.md step 4) → *New version* |
+| Change didn’t appear after editing | Deploy → Manage deployments → ✏️ → **New version** |
 | OTP never arrives | `MailApp` quota; or set `DEV_MODE=true` in a test deployment to echo the code |
 | Worker told to use another device | expected — Approvals → Device changes → approve |
 | Exports fail with 502 | Google endpoint hiccup — use Reports → Print → Save as PDF |

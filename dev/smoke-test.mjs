@@ -89,6 +89,37 @@ function istNow(offsetMinutes = 0) {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
+/* Settings windows are plain clock times (HH:MM) and must END after they
+   START, all within one day — a naive now±offset window crosses midnight for
+   several hours a day and made this suite fail at those times. These helpers
+   always produce a valid same-day window. */
+function istMinutes(offsetMinutes = 0) {
+  const [h, m] = istNow(offsetMinutes).split(':').map(Number);
+  return h * 60 + m;
+}
+function hhmm(mins) {
+  return `${String(Math.floor(mins / 60) % 24).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
+}
+/** Attendance window containing "now" (so marks are Present), same-day, never wrapping. */
+function attendanceWindowNow() {
+  const now = istMinutes(0);
+  return { start: hhmm(Math.max(0, now - 180)), end: hhmm(Math.min(1439, now + 120)) };
+}
+/** Check-out window after now; collapses to a valid pair late at night. */
+function outWindowNow() {
+  const now = istMinutes(0);
+  let s = Math.min(1439, now + 60);
+  let e = Math.min(1439, now + 480);
+  if (e <= s) { e = 1439; s = Math.max(0, e - 1); }
+  return { start: hhmm(s), end: hhmm(e) };
+}
+/** A 30-minute window guaranteed to EXCLUDE now (12 h away) — for the flag test. */
+function farWindowNow() {
+  const now = istMinutes(0);
+  const s = now < 720 ? 840 : 120;
+  return { start: hhmm(s), end: hhmm(s + 30) };
+}
+
 async function main() {
   console.log(c.bold('\n🏗️  SiteTrack backend smoke test'));
   console.log(c.dim('    data dir: ' + DATA_DIR));
@@ -181,16 +212,19 @@ async function main() {
   check('login works with the new password', saLogin2.ok);
   const saToken2 = saLogin2.data.token;
 
-  // Window computed around "now" in IST so the engine marks Present.
-  const winStart = istNow(-180);
-  const winEnd = istNow(120);
+  // Window computed around "now" in IST so the engine marks Present — clamped
+  // to a single day so the suite passes at every hour (see attendanceWindowNow).
+  const wizWin = attendanceWindowNow();
+  const wizOut = outWindowNow();
+  const winStart = wizWin.start;
+  const winEnd = wizWin.end;
   const wizard = api(app, 'completeSetupWizard', {
     companyName: 'Acme Fitout Pvt Ltd',
     companyAddress: '12 Site Road, Andheri East, Mumbai 400069, Maharashtra, India',
     gst: '27AABCA1234F1Z5', industryType: 'Interior Fit-out',
     defaultGeofenceRadius: 200, requireSelfie: true, requireDeviceBinding: true,
     attendanceWindowStart: winStart, attendanceWindowEnd: winEnd, lateGraceMinutes: 30,
-    outWindowStart: istNow(60), outWindowEnd: istNow(480),
+    outWindowStart: wizOut.start, outWindowEnd: wizOut.end,
     workingDays: '1,2,3,4,5,6', weeklyOff: '0', timezone: 'Asia/Kolkata',
     holidays: [
       { date: istDate(12), name: 'Founding Day', type: 'Company', paid: true }
@@ -325,10 +359,11 @@ async function main() {
   // time-window violation — tighten PROJECT 2's own window (project overrides company)
   const p2Detail = api(app, 'getProject', { projectId: p2 }, { token: saToken2 });
   const p2Lat = p2Detail.data.project.lat, p2Lng = p2Detail.data.project.lng;
+  const narrowWin = farWindowNow(); // guaranteed not to contain "now"
   const narrow = api(app, 'updateProject', {
-    projectId: p2, windowStart: '01:00', windowEnd: '01:30'
+    projectId: p2, windowStart: narrowWin.start, windowEnd: narrowWin.end
   }, { token: saToken2 });
-  check('project time window can be overridden', narrow.ok && narrow.data.project.windowEnd === '01:30',
+  check('project time window can be overridden', narrow.ok && narrow.data.project.windowEnd === narrowWin.end,
     narrow.data && `${narrow.data.project.windowStart}–${narrow.data.project.windowEnd}`);
   api(app, 'saveSettings', { settings: { lateGraceMinutes: 0 } }, { token: saToken2 });
   const emp4Login = api(app, 'login', { identifier: employees[3].mobile, password: employees[3].password, deviceFingerprint: 'fp-ravi-oppo-04' });
@@ -764,13 +799,15 @@ async function main() {
     payroll2b0.data && JSON.stringify(payroll2b0.data.totals));
 
   // ...and now the new tenant goes live purely through the API.
+  const wiz2Win = attendanceWindowNow();
+  const wiz2Out = outWindowNow();
   const wiz2 = api(app, 'completeSetupWizard', {
     companyName: 'BuildWell Contractors',
     companyAddress: '4 Industrial Estate, Chembur, Mumbai 400071, Maharashtra, India',
     gst: '27AABCB9876F1Z2', industryType: 'Civil Infrastructure',
     defaultGeofenceRadius: 150, requireSelfie: true, requireDeviceBinding: true,
-    attendanceWindowStart: istNow(-180), attendanceWindowEnd: istNow(120), lateGraceMinutes: 15,
-    outWindowStart: istNow(60), outWindowEnd: istNow(480),
+    attendanceWindowStart: wiz2Win.start, attendanceWindowEnd: wiz2Win.end, lateGraceMinutes: 15,
+    outWindowStart: wiz2Out.start, outWindowEnd: wiz2Out.end,
     workingDays: '1,2,3,4,5,6', weeklyOff: '0', timezone: 'Asia/Kolkata', holidays: []
   }, { token: co2Token });
   check('new tenant completes the setup wizard', wiz2.ok && wiz2.data.setupCompleted === true);
@@ -836,7 +873,40 @@ async function main() {
   const health = api(app, 'health');
   check('health check green', health.ok && health.data.ok === true, health.data && JSON.stringify(health.data.checks.map((x) => x.name + ':' + x.ok)));
 
-  // ---- summary ------------------------------------------------------------
+  // ---- Phase 9: the FULL frontend served by the same /exec URL ----------
+  head("Phase 9 — Frontend pages served by doGet (one URL, no external host)");
+  const DEV_WEBAPP = 'https://script.google.com/macros/s/DEV-TEST-DEPLOYMENT/exec';
+  const pingGet = app.context.doGet({ parameter: { action: 'ping' } });
+  const pingJson = JSON.parse(pingGet.getContent());
+  check('?action=ping over GET returns JSON, not a page',
+    pingJson.success === true && pingJson.data.actions === 99, `actions=${pingJson.data && pingJson.data.actions}`);
+
+  const pageList = ['', 'index', 'login', 'signup', 'status', 'app', 'mobile', 'owner', 'bogus-page'];
+  for (const p of pageList) {
+    const out = app.context.doGet({ parameter: p === '' ? {} : { page: p } });
+    const html = out.getContent();
+    const label = p === '' ? '(root URL)' : `?page=${p}`;
+    const okShape = html.includes('</html>') && html.includes('SITETRACK_CONFIG') &&
+      html.includes('window.SITETRACK_CONFIG') && html.includes('</body>');
+    check(`${label} renders as a full page`, okShape, html.slice(0, 120));
+    check(`${label} has a resolved API URL and no unresolved scriptlets`,
+      html.includes(DEV_WEBAPP) && !/<\?[\!=]/.test(html),
+      (html.match(/API_URL[^,]{0,80}/) || ['no API_URL'])[0]);
+  }
+  const appPage = app.context.doGet({ parameter: { page: 'app' } }).getContent();
+  check('staff console boots its shell (sidenav + view + admin module)',
+    appPage.includes('id="view"') && appPage.includes('ST.admin.boot') && appPage.includes('id="sidenav"'));
+  const mobilePage = app.context.doGet({ parameter: { page: 'mobile' } }).getContent();
+  check('worker app page boots its mobile module',
+    mobilePage.includes('ST.mobile.boot()') && mobilePage.includes('offline'));
+  const loginPage = app.context.doGet({ parameter: { page: 'login' } }).getContent();
+  check('login page links to the worker app and signup',
+    loginPage.includes('?page=mobile') || loginPage.includes('?page=signup'));
+  const rootPage = app.context.doGet({ parameter: {} }).getContent();
+  check('bare /exec URL serves the landing page (not a blank API stub)',
+    rootPage.includes('SITETRACK_CONFIG') && rootPage.includes('?page=login'));
+
+  // ---- summary -----------------------------------------------------------
   console.log('\n' + c.bold('─'.repeat(64)));
   if (failed === 0) {
     console.log(c.green(c.bold(`  ✅ ${passed} checks passed — backend is fully functional.`)));

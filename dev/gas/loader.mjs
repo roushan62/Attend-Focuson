@@ -42,6 +42,9 @@ export function checkSyntax(backendDir = BACKEND_DIR) {
 export function loadBackend({ dataDir = path.join(REPO_ROOT, 'dev', 'data'), verbose = false, backendDir = BACKEND_DIR } = {}) {
   const sandbox = createPolyfill({ dataDir, verbose });
   const context = vm.createContext(sandbox);
+  // Let HtmlService compile/evaluate templates inside this same context so
+  // scriptlets can call includeCss_, logoSvg_, ScriptApp, … like in the cloud.
+  if (typeof sandbox.HtmlService.__setVmContext === 'function') sandbox.HtmlService.__setVmContext(context);
 
   const sources = backendSources(backendDir);
   for (const src of sources) {

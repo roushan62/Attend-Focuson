@@ -85,11 +85,11 @@ function actionBootstrapPlatform(payload, ctx) {
     tokenSecretGenerated: created.tokenSecret,
     driveRootId: prop_(PROP.DRIVE_ROOT_ID, ''),
     nextSteps: [
-      '1. Store the owner key above in your password manager (the Owner panel asks for it at runtime — never ship it in config.js)',
+      '1. Store the owner key above in your password manager (the Owner panel at ?page=owner asks for it at runtime — never hard-code it).',
       '2. Deploy the script as a Web App (execute as: me, access: anyone).',
-      '3. Paste the Web App URL into frontend/config.js as API_URL.',
+      '3. Open the Web App URL — the same /exec link serves the website, staff console, worker app (?page=mobile) and owner panel (?page=owner). No separate hosting is needed.',
       '4. Run the owner action installTriggers to enable the scheduled jobs.',
-      '5. Run diagnoseDeployment() from the editor to verify every step.'
+      '5. Run diagnoseDeployment() from the editor to verify every step. Full copy-paste checklist: docs/SETUP.md.'
     ]
   };
 }

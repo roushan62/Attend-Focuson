@@ -2,12 +2,25 @@
    22_Frontend.gs — serve the full SiteTrack frontend from the Apps Script
    web-app URL.  No external hosting needed: one /exec URL serves both the
    JSON API and the HTML pages.
+
+   The Apps Script editor needs exactly two kinds of files beyond these .gs
+   modules (see docs/SETUP.md for the full copy-paste checklist):
+     · HTML files  — backend/*.html  → created as type "HTML" in the editor
+     · the manifest — backend/appsscript.json → Project settings
    ========================================================================== */
 
-/* ---- include helpers (used by tmpl/*.html via <?!= … ?>) ------------- */
+/* ---- include helpers (used by tmpl_*.html via <?!= … ?>) -------------- */
 
 function includeFile_(name) {
-  return HtmlService.createHtmlOutputFromFile(name).getContent();
+  var raw = HtmlService.createHtmlOutputFromFile(name).getContent();
+  // Scriptlets inside an included file (e.g. the auto API URL in
+  // tmpl_config_js) are NOT evaluated by getContent() — they only run inside
+  // a Template.evaluate().  Detect them and evaluate the file as a nested
+  // template; plain CSS/JS assets are returned untouched.
+  if (/<\?[\!=]/.test(raw)) {
+    raw = HtmlService.createTemplateFromFile(name).evaluate().getContent();
+  }
+  return raw;
 }
 
 function includeCss_(name) {
@@ -57,11 +70,66 @@ function servePage_(page) {
     'mobile':   'tmpl_mobile',
     'owner':    'tmpl_owner'
   };
-  var file = pages[page] || pages[''];
-  var tmpl = HtmlService.createTemplateFromFile(file);
-  var output = tmpl.evaluate()
-    .setTitle('SiteTrack')
-    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
-    .addMetaTag('viewport', 'width=device-width, initial-scale=1');
-  return output;
+  var titles = {
+    'tmpl_index':  'SiteTrack — GPS-verified construction site attendance',
+    'tmpl_login':  'Sign in — SiteTrack',
+    'tmpl_signup': 'Register your company — SiteTrack',
+    'tmpl_status': 'Application status — SiteTrack',
+    'tmpl_app':    'SiteTrack — Staff console',
+    'tmpl_mobile': 'SiteTrack — Worker app',
+    'tmpl_owner':  'Platform owner — SiteTrack'
+  };
+  var key = Object.prototype.hasOwnProperty.call(pages, page) ? page : '';
+  var file = pages[key];
+  try {
+    var tmpl = HtmlService.createTemplateFromFile(file);
+    var output = tmpl.evaluate()
+      .setTitle(titles[file] || 'SiteTrack')
+      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
+      .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+    return output;
+  } catch (err) {
+    // Most likely an HTML file that was not created in the Apps Script
+    // editor.  Say exactly which one instead of showing a blank page.
+    return HtmlService.createHtmlOutput(pageSetupError_(file, err))
+      .setTitle('SiteTrack — setup incomplete')
+      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
+      .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+  }
+}
+
+/** Friendly, secret-free setup error page (shown only when a file is missing). */
+function pageSetupError_(file, err) {
+  var detail = '';
+  try { detail = String((err && (err.message || err)) || ''); } catch (e) { detail = ''; }
+  return [
+    '<!DOCTYPE html><html><head><meta charset="utf-8">',
+    '<meta name="viewport" content="width=device-width,initial-scale=1">',
+    '<title>SiteTrack — setup incomplete</title>',
+    '<style>body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#0b1220;',
+    'color:#e6edf7;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}',
+    '.card{max-width:680px;background:#111c33;border:1px solid #22314f;border-radius:18px;padding:34px 30px}',
+    'h1{margin:0 0 8px;font-size:24px}code{background:#0b1220;padding:2px 6px;border-radius:6px;color:#7dd3fc}',
+    'p,li{line-height:1.6;color:#a9b7cf;font-size:14px}ol{padding-left:20px}</style></head><body>',
+    '<div class="card">',
+    '<h1>🧩 SiteTrack setup incomplete</h1>',
+    '<p>The page could not be rendered because an HTML file is missing from this Apps Script project.',
+    ' Nothing is broken in your data — this is a copy-paste step that was skipped.</p>',
+    '<p>Missing file: <code>' + escapeHtml_(file) + '.html</code></p>',
+    '<ol>',
+    '<li>Open your project at <code>script.google.com</code>.</li>',
+    '<li>Click <b>+ → HTML</b>, name it exactly <code>' + escapeHtml_(file) + '</code> (the editor adds .html).</li>',
+    '<li>Paste the contents of <code>' + escapeHtml_(file) + '.html</code> from the repository.</li>',
+    '<li>Save, then <b>Deploy → Manage deployments → ✏️ → New version → Deploy</b>.</li>',
+    '</ol>',
+    '<p>Full checklist: <code>docs/SETUP.md</code> in the repository.' +
+    (detail ? '<br>Technical detail: <code>' + escapeHtml_(detail) + '</code>' : '') + '</p>',
+    '</div></body></html>'
+  ].join('');
+}
+
+function escapeHtml_(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }

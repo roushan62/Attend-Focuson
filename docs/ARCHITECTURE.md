@@ -3,21 +3,30 @@
 ## 1. Big picture
 
 ```
-┌────────────┐  ┌────────────┐  ┌────────────┐        ┌─────────────────────────┐
-│ staff SPA  │  │ worker PWA │  │ owner panel│        │  Google Apps Script     │
-│ app.html   │  │ mobile.html│  │ owner.html │        │  Web App (doGet/doPost) │
-└─────┬──────┘  └─────┬──────  └─────┬──────┘        │  04_Router → 99 actions│
-      │   JSON over HTTPS (text/plain POST, no CORS pre-flight)                 │
-      └───────────────┴───────────────┘                 └──────────┬────────────┘
-                     │                                            │
-        ┌────────────▼─────────────┐              ┌───────────────┼───────────────┐
-        │ GitHub Pages / any host  │              │ SpreadsheetApp│ DriveApp      │
-        │ static frontend only     │              │ per-company   │ private folders│
-        └──────────────────────────┘              │ sheets + master│ MailApp/UrlFetch│
-                                                  └───────────────────────────────┘
+┌────────────┐  ┌────────────┐  ┌────────────┐
+│ staff SPA  │  │ worker PWA │  │ owner panel│
+│ ?page=app  │  │ ?page=mobile│ │ ?page=owner│
+└─────┬──────┘  └─────┬──────  └─────┬──────┘
+      │    same /exec origin — JSON over HTTPS (text/plain POST, no CORS pre-flight)
+      └───────────────┴───────────────┘
+                      │
+                      ▼
+        ┌──────────────────────────────────────────────┐
+        │  Google Apps Script Web App  (…/exec)        │
+        │  ├─ doGet → servePage_ → 16 HTML files       │
+        │  │         (tmpl_* pages + *_js/app_css)     │
+        │  └─ doPost → 04_Router → 99 JSON actions     │
+        └──────┬───────────────────────┬───────────────┘
+               ▼                       ▼
+   ┌──────────────────────┐  ┌────────────────────────┐
+   │ SpreadsheetApp       │  │ DriveApp               │
+   │ per-company sheets + │  │ private folders        │
+   │ Platform Master      │  │ MailApp / UrlFetchApp  │
+   └──────────────────────┘  └────────────────────────┘
 ```
 
-The frontend is **dumb**: it renders DTOs and never computes attendance rules.
+The frontend is **dumb**: it renders DTOs and never computes attendance rules. It is served
+*by* the same deployment as the API (`22_Frontend.gs`) — no separate host exists.
 The backend is **stateless** between calls: identity lives in an HMAC token, tenant data
 lives in the company spreadsheet, cross-call caches live in `CacheService`.
 

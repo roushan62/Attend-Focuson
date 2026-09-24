@@ -16,6 +16,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import vm from 'node:vm';
+import { fileURLToPath } from 'node:url';
+
+/** Directory of the deployed HTML files (one repo file = one Apps Script editor file). */
+const BACKEND_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'backend');
+/** The web-app URL ScriptApp.getService().getUrl() would return in the cloud. */
+export const DEV_WEBAPP_URL = 'https://script.google.com/macros/s/DEV-TEST-DEPLOYMENT/exec';
 
 const SIGNED = (buf) => Array.from(buf, (b) => (b > 127 ? b - 256 : b));
 const UNSIGNED = (arr) => {
@@ -587,19 +594,79 @@ export function createPolyfill({ dataDir, verbose = false }) {
     }
   };
 
+  /* HtmlService with a real template engine: scriptlets <? ?> <?= ?> <?!= ?>
+     are compiled and executed inside the SAME vm context as backend/*.gs, so
+     servePage_ renders exactly like the deployed web app. */
+  let vmContext = null;
+  const escapePrint_ = (v) => String(v === undefined || v === null ? '' : v)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
+  function resolveHtmlFile_(name) {
+    const base = String(name).replace(/\.html$/i, '');
+    for (const cand of [path.join(BACKEND_DIR, base + '.html'), path.join(BACKEND_DIR, base)]) {
+      if (fs.existsSync(cand)) return fs.readFileSync(cand, 'utf8');
+    }
+    throw new Error('File not found: ' + base + '.html — create it in the Apps Script editor (type HTML)');
+  }
+
+  function compileTemplate_(source) {
+    const parts = [];
+    const re = /<\?([\s\S]*?)\?>/g;
+    let last = 0;
+    let m;
+    while ((m = re.exec(source)) !== null) {
+      if (m.index > last) parts.push(['lit', source.slice(last, m.index)]);
+      const code = m[1];
+      if (code.slice(0, 2) === '!=') parts.push(['raw', code.slice(2)]);
+      else if (code.charAt(0) === '=') parts.push(['print', code.slice(1)]);
+      else parts.push(['code', code]);
+      last = m.index + m[0].length;
+    }
+    if (last < source.length) parts.push(['lit', source.slice(last)]);
+
+    let body = 'var __out = "";\n';
+    for (const [kind, v] of parts) {
+      if (kind === 'lit') body += '__out += ' + JSON.stringify(v) + ';\n';
+      else if (kind === 'code') body += v + '\n';
+      else if (kind === 'raw') body += '__out += String(' + v + ');\n';
+      else body += '__out += __print(' + v + ');\n';
+    }
+    body += 'return __out;';
+    if (!vmContext) throw new Error('HtmlService template evaluated before the VM context was wired');
+    const factory = vm.runInContext('(function (__print) {\n' + body + '\n})', vmContext, { filename: 'template.js' });
+    return () => factory(escapePrint_);
+  }
+
   const HtmlService = {
     XFrameOptionsMode: { ALLOWALL: 'ALLOWALL', SANDBOX: 'SANDBOX' },
     SandboxMode: { IFRAME: 'IFRAME' },
     createHtmlOutput(html) {
       const out = {
-        content: String(html), title: '',
+        content: String(html), title: '', meta: {},
         setTitle(t) { out.title = t; return out; },
         setXFrameOptionsMode() { return out; },
+        addMetaTag(name, content) { out.meta[name] = content; return out; },
         getContent: () => out.content
       };
       return out;
     },
-    createTemplate: () => ({ evaluate: () => HtmlService.createHtmlOutput('') })
+    createTemplate: () => ({ evaluate: () => HtmlService.createHtmlOutput('') }),
+    createHtmlOutputFromFile(name) {
+      return HtmlService.createHtmlOutput(resolveHtmlFile_(name));
+    },
+    createTemplateFromFile(name) {
+      let render = null;
+      return {
+        evaluate() {
+          if (!render) render = compileTemplate_(resolveHtmlFile_(name));
+          return HtmlService.createHtmlOutput(render());
+        },
+        getCode: () => resolveHtmlFile_(name)
+      };
+    },
+    /** Wired by dev/gas/loader.mjs once the vm context exists. */
+    __setVmContext(ctx) { vmContext = ctx; }
   };
 
   const triggers = [];
@@ -608,6 +675,7 @@ export function createPolyfill({ dataDir, verbose = false }) {
     TriggerSource: { CLOCK: 'CLOCK' },
     AuthMode: { FULL: 'FULL' },
     getOAuthToken: () => 'dev-oauth-token',
+    getService: () => ({ getUrl: () => DEV_WEBAPP_URL, getDeploymentId: () => 'DEV-TEST-DEPLOYMENT' }),
     getProjectTriggers: () => triggers.map((t, i) => ({
       getHandlerFunction: () => t.fn, getTriggerSource: () => 'CLOCK', getUniqueId: () => 'trg_' + i
     })),

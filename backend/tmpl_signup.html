@@ -176,7 +176,7 @@
       el('submitBtn').disabled = false;
       el('appId').textContent = res.requestId || '';
       el('doneText').textContent = res.message || 'Submitted.';
-      el('statusLink').href = res.trackUrl || '?page=status';
+      el('statusLink').href = '?page=status&requestId=' + encodeURIComponent(res.requestId || '');
       show(3);
     } catch (e) { el('submitBtn').disabled = false; toast(e.message, 'bad'); }
   });
