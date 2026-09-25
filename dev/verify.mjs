@@ -46,13 +46,18 @@ const perFile = Object.fromEntries(sources.map((s) => [s.file, s.code]));
 const definedFns = [...backendCode.matchAll(/^function\s+([A-Za-z0-9_$]+)/gm)].map((m) => m[1]);
 const definedSet = new Set(definedFns);
 
-const PAGES = ['index.html', 'login.html', 'signup.html', 'status.html', 'app.html', 'owner.html', 'mobile.html'];
-const JS_FILES = ['api.js', 'i18n.js', 'ui.js', 'map.js', 'admin.js', 'mobile.js', 'owner.js'];
-const frontendCode = [
-  ...PAGES.map((p) => read('frontend/' + p)),
-  ...JS_FILES.map((f) => read('frontend/assets/js/' + f)),
-  read('frontend/config.js'), read('frontend/sw.js'), read('frontend/manifest.webmanifest')
-].join('\n');
+/* The frontend IS part of the Apps Script project: pages are backend/tmpl_*.html
+   and the shared JavaScript/CSS are flat backend/*.html files inlined by
+   includeJs_()/includeCss_(). Nothing is hosted anywhere else. */
+const PAGES = ['tmpl_index.html', 'tmpl_login.html', 'tmpl_company.html', 'tmpl_employee.html',
+  'tmpl_signup.html', 'tmpl_status.html', 'tmpl_app.html', 'tmpl_mobile.html', 'tmpl_owner.html'];
+const JS_FILES = ['api_js.html', 'i18n_js.html', 'ui_js.html', 'map_js.html', 'admin_js.html',
+  'mobile_js.html', 'owner_js.html', 'auth_js.html'];
+const CSS_FILES = ['app_css.html'];
+const CONFIG_FILE = 'tmpl_config_js.html';
+const readUI = (f) => read('backend/' + f);
+const UI_FILES = [...PAGES, ...JS_FILES, ...CSS_FILES, CONFIG_FILE];
+const frontendCode = UI_FILES.map(readUI).join('\n');
 
 /* ------------------------------------------------------------------- 1. GAS */
 section('Apps Script sources', () => {
@@ -222,7 +227,7 @@ section('Frontend ↔ backend contract', () => {
  * page threw only when a worker took a selfie. Static check of every namespace
  * member the frontend touches, against the object each module actually exports.
  */
-const mod = (f) => stripJs(read('frontend/assets/js/' + f));
+const mod = (f) => stripJs(readUI(f));
 const stripJs = (src) => src
   .replace(/\/\*[\s\S]*?\*\//g, ' ')
   .replace(/(^|[^:'"\\])\/\/[^\n]*/g, '$1')
@@ -270,7 +275,7 @@ function topKeys(objSrc) {
 section('Frontend namespace contract', () => {
   const srcOf = {};
   for (const f of JS_FILES) srcOf[f] = mod(f);
-  const configSrc = stripJs(read('frontend/config.js'));
+  const configSrc = stripJs(readUI(CONFIG_FILE));
 
   // Every namespace the modules publish — `window.ST.ui = { … }` or `window.ST.store = store;`
   // (the second form resolves to the module-level literal it points at).
@@ -297,7 +302,7 @@ section('Frontend namespace contract', () => {
   const aliasRe = /([A-Za-z_$][\w$]*)\s*=\s*ST\.([A-Za-z_$][\w$]*)\s*(?:[,;)\n]|\s*$)/g;
   let refs = 0;
   for (const f of [...JS_FILES, ...PAGES]) {
-    const src = f.endsWith('.html') ? stripJs(read('frontend/' + f)) : srcOf[f];
+    const src = f.endsWith('.html') ? stripJs(readUI(f)) : srcOf[f];
     const uses = [];
     for (const x of src.matchAll(/\bST\.([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)/g)) uses.push([x[1], x[2]]);
     for (const x of src.matchAll(/\bST\.api\.([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)/g)) uses.push(['api.' + x[1], x[2]]);
@@ -329,53 +334,63 @@ section('Frontend namespace contract', () => {
   }
 });
 
-section('Static assets', () => {
-  for (const page of PAGES) {
-    const html = read('frontend/' + page);
-    for (const m of html.matchAll(/(?:src|href)="([^"]+)"/g)) {
-      const u = m[1];
-      if (/^(https?:|data:|#|mailto:|tel:|\/)/.test(u)) continue;
-      const rel = u.split('?')[0].split('#')[0];
-      if (!rel) continue;
-      if (!exists('frontend/' + rel)) fail('assets', `${page} → ${rel} (missing)`);
-    }
-  }
-  const man = JSON.parse(read('frontend/manifest.webmanifest'));
-  (man.icons || []).forEach((i) => { if (!exists('frontend/' + i.src)) fail('assets', `manifest icon missing: ${i.src}`); });
-  ['start_url', 'scope'].forEach((k) => {
-    const v = man[k] || '';
-    if (v.startsWith('./') && v !== './' && !exists('frontend/' + v.slice(2))) fail('assets', `manifest ${k} → ${v} (missing)`);
-  });
-  const sw = read('frontend/sw.js');
-  [...sw.matchAll(/'\.\/([^']+)'/g)].forEach((m) => {
-    if (m[1] && !exists('frontend/' + m[1])) fail('assets', `service worker precaches missing file: ${m[1]}`);
-  });
-  (man.shortcuts || []).forEach((s) => {
-    if (s.url && s.url.startsWith('./') && !exists('frontend/' + s.url.slice(2).split('#')[0])) fail('assets', `manifest shortcut → ${s.url} (missing)`);
+section('Apps Script frontend wiring', () => {
+  // Every page in the router must exist as a template, and every template must
+  // be reachable — an unreferenced file is dead weight inside the project.
+  const routerSrc = perFile['22_Frontend.gs'];
+  const pageFiles = [...routerSrc.matchAll(/file:\s*'([A-Za-z0-9_]+)'/g)].map((m) => m[1] + '.html');
+  pageFiles.forEach((f) => { if (!exists('backend/' + f)) fail('pages', `22_Frontend.gs serves backend/${f} which does not exist`); });
+  PAGES.forEach((f) => { if (!pageFiles.includes(f)) fail('pages', `${f} is never served by the page router`); });
+  ['company', 'employee'].forEach((route) => {
+    if (!new RegExp("'" + route + "':\\s*\\{").test(routerSrc)) fail('pages', `the ?page=${route} route is missing from PAGES`);
   });
 
-  // Orphan sweep: every shipped file should be reachable from a page, the
-  // manifest, the service worker or the action table.
-  const allowedOrphans = new Set(['.nojekyll', 'sw.js', 'manifest.webmanifest', 'config.js', 'favicon.svg', 'index.html',
-    'login.html', 'signup.html', 'status.html', 'app.html', 'owner.html', 'mobile.html',
-    'assets/css/app.css', 'assets/icons/logo.svg', 'assets/icons/apple-touch-icon.png',
-    'assets/js/api.js', 'assets/js/i18n.js', 'assets/js/ui.js', 'assets/js/map.js',
-    'assets/js/admin.js', 'assets/js/mobile.js', 'assets/js/owner.js']);
-  const walk = (dir) => fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true })
-    .flatMap((d) => d.isDirectory() ? walk(path.join(dir, d.name)) : [path.join(dir, d.name)]);
-  const files = walk('frontend');
-  const orphans = files.filter((f) => {
-    const rel = f.replace(/\\/g, '/').replace(/^frontend\//, '');
-    if (allowedOrphans.has(rel)) return false;
-    return !frontendCode.includes(rel.split('/').pop());
+  // includeJs_/includeCss_ must point at real files (Apps Script resolves the
+  // name without extension), and every asset must be included by some page.
+  const included = new Set();
+  PAGES.forEach((page) => {
+    const html = readUI(page);
+    for (const m of html.matchAll(/include(?:Js|Css|File)_\(\s*'([A-Za-z0-9_]+)'/g)) {
+      const file = m[1] + '.html';
+      included.add(file);
+      if (!exists('backend/' + file)) fail('assets', `${page} includes '${m[1]}' but backend/${file} is missing`);
+    }
   });
-  if (orphans.length) fail('unused files', 'not referenced anywhere: ' + orphans.join(', '));
-  else info(`${files.length} frontend files, none orphaned`);
+  [...JS_FILES, ...CSS_FILES, CONFIG_FILE].forEach((f) => {
+    if (!included.has(f)) fail('assets', `backend/${f} is never included by any page (dead file)`);
+  });
+
+  // Apps Script inlines the files, so the pages must not link to .html URLs —
+  // every link has to be a ?page=<route> route or the router would 404.
+  PAGES.forEach((page) => {
+    const html = readUI(page);
+    for (const m of html.matchAll(/href="([^"]*\.html[^"]*)"/g)) {
+      fail('links', `${page} links to '${m[1]}' — inside Apps Script use ?page=<route>`);
+    }
+  });
+
+  // Both sign-in portals must be complete: their own page, their own actions.
+  const company = readUI('tmpl_company.html');
+  const employee = readUI('tmpl_employee.html');
+  if (!company.includes("ST.auth.mount({ portal: 'company' })")) fail('portals', 'tmpl_company.html does not mount the company portal');
+  if (!employee.includes("ST.auth.mount({ portal: 'employee' })")) fail('portals', 'tmpl_employee.html does not mount the employee portal');
+  ['companyLogin', 'companySendOtp'].forEach((a) => { if (!actions.some((x) => x.action === a)) fail('portals', `company portal action ${a} is missing from the router`); });
+  ['employeeLogin', 'employeeSendOtp'].forEach((a) => { if (!actions.some((x) => x.action === a)) fail('portals', `employee portal action ${a} is missing from the router`); });
+  if (!perFile['06_Auth.gs'].includes('function assertPortal_')) fail('portals', '06_Auth.gs must gate each portal server-side (assertPortal_)');
+
+  // No static-host leftovers: the whole point is one Apps Script deployment.
+  ['frontend', 'deploy', 'hrms', 'scripts'].forEach((dir) => {
+    if (fs.existsSync(path.join(ROOT, dir))) fail('layout', `${dir}/ still exists — this project is Apps Script + Sheets only`);
+  });
+  const backendHtml = fs.readdirSync(path.join(ROOT, 'backend')).filter((f) => f.endsWith('.html'));
+  const expected = new Set([...PAGES, ...JS_FILES, ...CSS_FILES, CONFIG_FILE]);
+  backendHtml.forEach((f) => { if (!expected.has(f)) fail('unused files', `backend/${f} is not a page or an included asset`); });
+  info(`${PAGES.length} pages + ${JS_FILES.length + CSS_FILES.length + 1} inlined assets, all wired through the router`);
 });
 
 /* ------------------------------------------------------------------ 6. i18n */
 section('i18n (English / हिंदी)', () => {
-  const src = read('frontend/assets/js/i18n.js');
+  const src = readUI('i18n_js.html');
   const objAt = (from) => {
     let i = src.indexOf('{', from), depth = 0;
     for (let j = i; j < src.length; j++) {
@@ -416,10 +431,10 @@ section('i18n (English / हिंदी)', () => {
 
   const used = new Set();
   for (const page of PAGES) {
-    for (const m of read('frontend/' + page).matchAll(/data-i18n(?:-ph|-title|-html)?="([^"]+)"/g)) used.add(m[1]);
+    for (const m of readUI(page).matchAll(/data-i18n(?:-ph|-title|-html)?="([^"]+)"/g)) used.add(m[1]);
   }
   for (const f of JS_FILES) {
-    const code = read('frontend/assets/js/' + f);
+    const code = readUI(f);
     for (const m of code.matchAll(/i18n\.t\(\s*'([A-Za-z0-9_]+)'/g)) used.add(m[1]);
     for (const m of code.matchAll(/\bt\(\s*'([A-Za-z0-9_]+)'/g)) used.add(m[1]);
     for (const m of code.matchAll(/data-i18n(?:-ph|-title|-html)?="([A-Za-z0-9_]+)"/g)) used.add(m[1]);
@@ -439,8 +454,8 @@ section('Zero demo data & no debug leftovers', () => {
     [/\bdebugger\b/, 'a debugger statement']
   ];
   const shipped = [...sources.map((s) => 'backend/' + s.file), 'backend/appsscript.json',
-    ...PAGES.map((p) => 'frontend/' + p), ...JS_FILES.map((f) => 'frontend/assets/js/' + f),
-    'frontend/assets/css/app.css', 'frontend/config.js', 'frontend/sw.js', 'frontend/manifest.webmanifest'];
+    ...PAGES.map((p) => 'backend/' + p), ...JS_FILES.map((f) => 'backend/' + f),
+    ...CSS_FILES.map((f) => 'backend/' + f), 'backend/' + CONFIG_FILE];
   for (const rel of shipped) {
     const text = read(rel);
     text.split('\n').forEach((line, i) => {
@@ -452,7 +467,7 @@ section('Zero demo data & no debug leftovers', () => {
       }
     });
   }
-  const logs = JS_FILES.map((f) => [f, (read('frontend/assets/js/' + f).match(/console\.(log|debug)\(/g) || []).length])
+  const logs = JS_FILES.map((f) => [f, (readUI(f).match(/console\.(log|debug)\(/g) || []).length])
     .filter(([, n]) => n > 0);
   if (logs.length) info('console usage in shipped JS: ' + logs.map(([f, n]) => `${f}×${n}`).join(', '));
   info(`${shipped.length} shipped files scanned for demo data and debug leftovers`);
@@ -483,7 +498,7 @@ section('Documentation sync', () => {
   if (version && !readme.includes(version) && api.includes('version')) info(`manifest/API version ${version}`);
 
   // Files that the README promises actually exist.
-  [...readme.matchAll(/`((?:backend|frontend|dev|docs|scripts|deploy)\/[A-Za-z0-9_./-]+)`/g)]
+  [...readme.matchAll(/`((?:backend|dev|docs)\/[A-Za-z0-9_./-]+)`/g)]
     .map((m) => m[1].replace(/\/$/, ''))
     .filter((p) => p.includes('.') && !p.endsWith('/') && !/^dev\/data(-test)?\//.test(p))
     .forEach((p) => { if (!exists(p)) fail('README', `references ${p} which is not in the repo`); });
@@ -500,13 +515,12 @@ section('Deployment manifest', () => {
   const wa = (manifest.webapp || {});
   if (!wa.executeAs) fail('appsscript.json', 'webapp.executeAs is missing — the deployment would not own the Sheets');
   if (wa.access !== 'ANYONE' && wa.access !== 'ANYONE_ANONYMOUS') fail('appsscript.json', `webapp.access must be ANYONE_ANONYMOUS (found ${wa.access})`);
-  if ((wa.access === 'ANYONE') ) info('webapp.access=ANYONE requires a Google sign-in; ANYONE_ANONYMOUS is what workers need');
+  if ((wa.access === 'ANYONE')) info('webapp.access=ANYONE requires a Google sign-in; ANYONE_ANONYMOUS is what workers need');
+  info('deployment: one Apps Script Web App serves the API and every page (no external host)');
 
-  const yml = read('deploy/github-pages.workflow.yml');
-  if (!yml.includes('frontend')) fail('GitHub Pages workflow', 'does not publish the frontend/ directory');
-  if (!/jekyll[\s|_-]*false|!jekyll|\.nojekyll/.test(yml + (exists('frontend/.nojekyll') ? '.nojekyll' : ''))) {
-    fail('GitHub Pages workflow', 'Jekyll is not disabled — add frontend/.nojekyll or `jekyll: false` or dot-file assets can vanish');
-  }
+  // clasp pushes backend/ — the .clasp.json example must agree.
+  const clasp = read('.clasp.json.example');
+  if (!/"rootDir":\s*"backend"/.test(clasp)) fail('clasp', '.clasp.json.example must point rootDir at backend/');
 });
 
 /* ----------------------------------------------------------------- summary */

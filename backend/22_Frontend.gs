@@ -1,13 +1,23 @@
 /* ============================================================================
-   22_Frontend.gs — serve the full SiteTrack frontend from the Apps Script
-   web-app URL.  No external hosting needed: one /exec URL serves both the
-   JSON API and the HTML pages.
+   22_Frontend.gs — serve the WHOLE SiteTrack frontend from the same Apps Script
+   Web App that answers the JSON API. Nothing is hosted anywhere else: one
+   /exec URL gives you the public site, both sign-in portals, the company
+   console, the employee app and the admin panel.
    ========================================================================== */
 
-/* ---- include helpers (used by tmpl/*.html via <?!= … ?>) ------------- */
+/* ---- include helpers (used by the tmpl_*.html pages via <?!= … ?>) --- */
 
+/**
+ * Inline one of the project's own files into a page.
+ *
+ * createTemplateFromFile().evaluate() (not createHtmlOutputFromFile) is used
+ * on purpose: it also evaluates scriptlets inside the included file — which is
+ * how tmpl_config_js.html reads its OWN web-app URL with
+ * `<?= ScriptApp.getService().getUrl() ?>` so that API_URL always points at the
+ * deployment that served the page. No domain is ever hard-coded.
+ */
 function includeFile_(name) {
-  return HtmlService.createHtmlOutputFromFile(name).getContent();
+  return HtmlService.createTemplateFromFile(name).evaluate().getContent();
 }
 
 function includeCss_(name) {
@@ -46,22 +56,44 @@ function logoSvgLarge_() {
 
 /* ---- page router ----------------------------------------------------- */
 
+/**
+ * Every screen is served from this one Web-App URL as  ?page=<route>.
+ *
+ *   ?page=index     public landing page (choose a portal)
+ *   ?page=company   COMPANY sign-in  — SuperAdmin / Admin / SubAdmin  → ?page=app
+ *   ?page=employee  EMPLOYEE sign-in — site workers                   → ?page=mobile
+ *   ?page=login     small chooser that points at the two portals above
+ *   ?page=signup    company registration request (goes to the admin panel)
+ *   ?page=status    public tracker for a signup request
+ *   ?page=app       company console (staff)
+ *   ?page=mobile    employee app (worker)
+ *   ?page=owner     platform admin panel (signup approvals, companies) — ?page=admin too
+ */
+var PAGES = {
+  '':         { file: 'tmpl_index',    title: 'SiteTrack — site attendance on Google Sheets' },
+  'index':    { file: 'tmpl_index',    title: 'SiteTrack — site attendance on Google Sheets' },
+  'login':    { file: 'tmpl_login',    title: 'Sign in — SiteTrack' },
+  'company':  { file: 'tmpl_company',  title: 'Company sign in — SiteTrack' },
+  'employee': { file: 'tmpl_employee', title: 'Employee sign in — SiteTrack' },
+  'signup':   { file: 'tmpl_signup',   title: 'Register your company — SiteTrack' },
+  'status':   { file: 'tmpl_status',   title: 'Application status — SiteTrack' },
+  'app':      { file: 'tmpl_app',      title: 'SiteTrack — company console' },
+  'mobile':   { file: 'tmpl_mobile',   title: 'SiteTrack — employee app' },
+  'owner':    { file: 'tmpl_owner',    title: 'SiteTrack — admin panel' },
+  'admin':    { file: 'tmpl_owner',    title: 'SiteTrack — admin panel' }
+};
+
+function pageRoute_(page) {
+  var key = String(page === undefined || page === null ? '' : page).toLowerCase().trim();
+  return PAGES[key] || PAGES[''];
+}
+
 function servePage_(page) {
-  var pages = {
-    '':         'tmpl_index',
-    'index':    'tmpl_index',
-    'login':    'tmpl_login',
-    'signup':   'tmpl_signup',
-    'status':   'tmpl_status',
-    'app':      'tmpl_app',
-    'mobile':   'tmpl_mobile',
-    'owner':    'tmpl_owner'
-  };
-  var file = pages[page] || pages[''];
-  var tmpl = HtmlService.createTemplateFromFile(file);
-  var output = tmpl.evaluate()
-    .setTitle('SiteTrack')
+  var route = pageRoute_(page);
+  var tmpl = HtmlService.createTemplateFromFile(route.file);
+  return tmpl.evaluate()
+    .setTitle(route.title)
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
-    .addMetaTag('viewport', 'width=device-width, initial-scale=1');
-  return output;
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1, viewport-fit=cover')
+    .addMetaTag('robots', 'noindex');
 }

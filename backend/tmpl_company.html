@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Company sign in — SiteTrack</title>
+<meta name="description" content="SiteTrack company sign-in for Super Admin, Admin and Sub-Admin (HR) accounts.">
+<meta name="theme-color" content="#0b1220">
+<?!= includeCss_('app_css') ?>
+</head>
+<body>
+
+<main class="auth-shell">
+  <div class="auth-card portal-card">
+    <div class="auth-head">
+      <div class="logo"><?!= logoSvgLarge_() ?></div>
+      <span class="chip">COMPANY PORTAL</span>
+      <h1 data-i18n="companyLogin">Company login</h1>
+      <p class="sub" data-i18n="companyLoginSub">For the company Super Admin, Admin and Sub-Admin (HR) accounts created in your Google Sheet.</p>
+    </div>
+
+    <div class="tabs mt" id="modeTabs">
+      <button class="tab active" data-mode="password" data-i18n="passwordLogin">Password</button>
+      <button class="tab" data-mode="otp" data-i18n="otpLogin">Mobile OTP</button>
+    </div>
+
+    <div class="field mt" id="companyWrap">
+      <label data-i18n="companyCode">Company code</label>
+      <input id="companyCode" autocomplete="organization" placeholder="CMP-XXXXXX">
+      <div class="hint" data-i18n="companyCodeHint">Printed in your approval e-mail. Leave blank if you only have one company.</div>
+    </div>
+
+    <div class="field mt"><label class="req" data-i18n="userIdEmailMobile">User ID / e-mail / mobile</label>
+      <input id="identifier" autocomplete="username" placeholder="SA-CMP… or hr@yourcompany.com"></div>
+
+    <div class="field" id="pwWrap"><label class="req" data-i18n="password">Password</label>
+      <input id="password" type="password" autocomplete="current-password" placeholder="••••••••">
+      <div class="hint"><a href="#" id="forgotLink">Forgot password?</a></div>
+    </div>
+
+    <div class="field" id="otpWrap" hidden><label class="req" data-i18n="otpCode">One-time code</label>
+      <div class="row" style="gap:8px">
+        <input id="otp" inputmode="numeric" maxlength="6" placeholder="6-digit code">
+        <button class="btn" id="sendOtpBtn" data-i18n="sendOtp">Send OTP</button>
+      </div>
+      <div class="hint" id="otpHint">The code is sent to the mobile number saved on your user record.</div>
+    </div>
+
+    <button class="btn primary wfull mt" id="loginBtn" data-i18n="signIn">Sign in</button>
+    <div id="postLogin" class="mt" hidden></div>
+
+    <p class="tiny muted mt" style="text-align:center">
+      Site employee? <a href="?page=employee" data-i18n="employeeLogin">Employee login</a> ·
+      <a href="?page=index" data-i18n="backHome">Back to home</a>
+    </p>
+    <p class="tiny muted" style="text-align:center">
+      New company? <a href="?page=signup" data-i18n="companySignup">Register your company</a> —
+      approval by the administrator is required before the first sign-in.
+    </p>
+  </div>
+</main>
+
+<div id="toasts"></div>
+<?!= includeJs_('tmpl_config_js') ?>
+<?!= includeJs_('i18n_js') ?>
+<?!= includeJs_('api_js') ?>
+<?!= includeJs_('ui_js') ?>
+<?!= includeJs_('auth_js') ?>
+<script>
+  ST.ui.applyTheme();
+  ST.auth.mount({ portal: 'company' });
+</script>
+</body>
+</html>

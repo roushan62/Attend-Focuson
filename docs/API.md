@@ -6,15 +6,27 @@ All calls go to the Apps Script Web App URL.
 POST {API_URL}
 Content-Type: text/plain;charset=utf-8
 
-{"action":"login","token":"<session token>","payload":{...}}
+{"action":"companyLogin","token":"<session token>","payload":{...}}
 ```
 
 GET is also supported: `{API_URL}?action=me&token=…&payload={…}` (used for cheap polls).
 Every response is `{success, data?, error?, meta:{requestId, action, serverTime, ms, role, companyId}}`.
 Errors carry `error:{code, message}` with HTTP-style codes (400/401/403/404/409/413/500…).
 
-**Auth levels:** `none` public · `user` any signed-in account · `staff` SuperAdmin/Admin/SubAdmin · `owner` platform owner key token.
+**Auth levels:** `none` public · `user` any signed-in account · `staff` SuperAdmin/Admin/SubAdmin · `owner` platform admin key token.
 **perm** = extra permission flag required for Sub-Admins/Admins (Super Admins bypass).
+
+**The two sign-in doors are separate and both read YOUR company sheet:**
+
+| Door | Page | Payload | Who gets in |
+|---|---|---|---|
+| `companyLogin` / `companySendOtp` | `?page=company` | `identifier` (user ID / e-mail / mobile) + `password` **or** `otp`, optional `companyId` (the `CMP-…` company code) | SuperAdmin, Admin, SubAdmin only |
+| `employeeLogin` / `employeeSendOtp` | `?page=employee` | `identifier` + `password` **or** `otp`, optional `companyId` | Employee (site worker) only |
+
+Both return `portal: "company" | "employee"` in the session payload; a credential
+presented at the wrong door is refused with `403` and a pointer to the right page.
+There is no generic `login` action any more — every session starts at one of these
+two doors, and the platform admin door (`ownerLogin`) is separate again.
 
 
 ## system / public
@@ -25,11 +37,12 @@ Errors carry `error:{code, message}` with HTTP-style codes (400/401/403/404/409/
 | `health` | `actionHealth` | none | — | — |
 | `registerCompany` | `actionRegisterCompany` | none | — | register |
 | `signupStatus` | `actionSignupStatus` | none | — | lookup |
-| `sendOtp` | `actionSendOtp` | none | — | otp |
 | `sendSignupOtp` | `actionSendSignupOtp` | none | — | otp |
 | `verifyOtp` | `actionVerifyOtp` | none | — | lookup |
-| `login` | `actionLogin` | none | — | login |
-| `loginWithOtp` | `actionLoginWithOtp` | none | — | login |
+| `companyLogin` | `actionCompanyLogin` | none | — | login |
+| `companySendOtp` | `actionCompanySendOtp` | none | — | otp |
+| `employeeLogin` | `actionEmployeeLogin` | none | — | login |
+| `employeeSendOtp` | `actionEmployeeSendOtp` | none | — | otp |
 | `ownerLogin` | `actionOwnerLogin` | none | — | login |
 | `bootstrapPlatform` | `actionBootstrapPlatform` | none | — | — |
 
@@ -182,5 +195,5 @@ Errors carry `error:{code, message}` with HTTP-style codes (400/401/403/404/409/
 | `listAuditLog` | `actionListAuditLog` | staff | viewAuditLog | — |
 
 
-Total actions: **99** — this file mirrors `ACTIONS` in `backend/04_Router.gs`;
+Total actions: **100** — this file mirrors `ACTIONS` in `backend/04_Router.gs`;
 `npm run verify` fails if the two ever disagree.

@@ -15,6 +15,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import vm from 'node:vm';
 import crypto from 'node:crypto';
 
 const SIGNED = (buf) => Array.from(buf, (b) => (b > 127 ? b - 256 : b));
@@ -25,7 +26,7 @@ const UNSIGNED = (arr) => {
   return Buffer.alloc(0);
 };
 
-export function createPolyfill({ dataDir, verbose = false }) {
+export function createPolyfill({ dataDir, verbose = false, templateDir = null, serviceUrl = '', contextRef = null }) {
   const DATA = dataDir;
   const SHEETS_DIR = path.join(DATA, 'sheets');
   const DRIVE_DIR = path.join(DATA, 'drive');
@@ -587,19 +588,73 @@ export function createPolyfill({ dataDir, verbose = false }) {
     }
   };
 
+  /* ------------------------------------------------------- HtmlService ---
+   * A faithful-enough clone of Apps Script's templating so the pages in
+   * backend/*.html can be rendered locally exactly as script.google.com
+   * renders them:
+   *    <?!= expr ?>  raw output          <?= expr ?>  HTML-escaped output
+   *    <? code ?>    script statements   and all of them run in the SAME
+   *                  sandbox as the backend, so includeCss_('app_css') and
+   *                  logoSvg_() resolve against the real .gs code.
+   * -------------------------------------------------------------------- */
+  function htmlOutput(html) {
+    const out = {
+      content: String(html), title: '', metas: [],
+      setTitle(t) { out.title = String(t); return out; },
+      addMetaTag(name, content) { out.metas.push([name, content]); return out; },
+      setFaviconUrl() { return out; },
+      setXFrameOptionsMode() { return out; },
+      setSandboxMode() { return out; },
+      getContent: () => out.content
+    };
+    return out;
+  }
+
+  function templateFile(name) {
+    const clean = String(name).replace(/\.html$/, '');
+    const candidates = [
+      path.join(templateDir || path.join(dataDir, '..', '..', 'backend'), clean + '.html'),
+      path.join(templateDir || path.join(dataDir, '..', '..', 'backend'), String(name))
+    ];
+    for (const c of candidates) if (fs.existsSync(c)) return c;
+    throw new Error('HtmlService: no such file: ' + name);
+  }
+
+  /** Turn a template into executable JS for the sandbox context. */
+  function compileTemplate(source) {
+    const parts = String(source).split(/(<\?[!=]?[\s\S]*?\?>)/);
+    let body = '';
+    for (const part of parts) {
+      if (part.startsWith('<?!=')) body += '__out.push(String(' + part.slice(4, -2) + '));\n';
+      else if (part.startsWith('<?=')) body += '__out.push(__esc(' + part.slice(3, -2) + '));\n';
+      else if (part.startsWith('<?')) body += part.slice(2, -2) + '\n';
+      else if (part) body += '__out.push(' + JSON.stringify(part) + ');\n';
+    }
+    return '(function(){ var __out = []; var __esc = function (v) { return String(v == null ? "" : v)' +
+      '.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); };\n' +
+      body + 'return __out.join(""); })()';
+  }
+
+  function renderTemplate(name) {
+    if (!contextRef || !contextRef.context) throw new Error('HtmlService: render context not attached');
+    const file = templateFile(name);
+    const code = compileTemplate(fs.readFileSync(file, 'utf8'));
+    // The compiled template is a self-invoking function returning the HTML.
+    return String(vm.runInContext(code, contextRef.context, { filename: path.basename(file) }));
+  }
+
   const HtmlService = {
     XFrameOptionsMode: { ALLOWALL: 'ALLOWALL', SANDBOX: 'SANDBOX' },
     SandboxMode: { IFRAME: 'IFRAME' },
-    createHtmlOutput(html) {
-      const out = {
-        content: String(html), title: '',
-        setTitle(t) { out.title = t; return out; },
-        setXFrameOptionsMode() { return out; },
-        getContent: () => out.content
-      };
-      return out;
+    createHtmlOutput: (html) => htmlOutput(html),
+    createHtmlOutputFromFile(name) {
+      const file = templateFile(name);
+      return htmlOutput(fs.readFileSync(file, 'utf8'));
     },
-    createTemplate: () => ({ evaluate: () => HtmlService.createHtmlOutput('') })
+    createTemplateFromFile(name) {
+      return { evaluate: () => htmlOutput(renderTemplate(name)) };
+    },
+    createTemplate: (source) => ({ evaluate: () => htmlOutput(String(source)) })
   };
 
   const triggers = [];
@@ -627,7 +682,11 @@ export function createPolyfill({ dataDir, verbose = false }) {
       };
       return builder;
     },
-    deleteTrigger(t) { const i = triggers.findIndex((x) => x.fn === t.getHandlerFunction()); if (i >= 0) triggers.splice(i, 1); }
+    deleteTrigger(t) { const i = triggers.findIndex((x) => x.fn === t.getHandlerFunction()); if (i >= 0) triggers.splice(i, 1); },
+    // '' (as the dev server passes) makes the pages fall back to the relative
+    // /api path; a real deployment returns the script.google.com /exec URL.
+    getService: () => ({ getUrl: () => (serviceUrl === null || serviceUrl === undefined ? 'http://127.0.0.1:8080/' : serviceUrl) }),
+    getProjectTriggers_() { return triggers; }
   };
 
   const Session = {

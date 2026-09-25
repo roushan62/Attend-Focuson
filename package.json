@@ -2,7 +2,7 @@
   "name": "sitetrack",
   "version": "1.0.0",
   "private": true,
-  "description": "SiteTrack — construction site attendance & workforce management built entirely on Google Sheets + Apps Script. Zero npm dependencies: the scripts below run on plain Node.",
+  "description": "SiteTrack — construction site attendance & workforce management built entirely on Google Apps Script (API + the whole frontend) and Google Sheets (database). Zero npm dependencies: the scripts below run on plain Node.",
   "license": "MIT",
   "engines": {
     "node": ">=18"
@@ -12,7 +12,6 @@
     "test": "node dev/smoke-test.mjs",
     "verify": "node dev/verify.mjs",
     "check": "node dev/verify.mjs && node dev/smoke-test.mjs",
-    "icons": "node scripts/make-icons.mjs",
     "clean": "node -e \"require('node:fs').rmSync('dev/data',{recursive:true,force:true});require('node:fs').rmSync('dev/data-test',{recursive:true,force:true});console.log('local harness state cleared')\""
   }
 }

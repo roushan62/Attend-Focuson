@@ -126,7 +126,7 @@ function actionRegisterCompany(payload, ctx) {
     requestId: row.RequestID,
     status: row.Status,
     message: 'Your request has been submitted. Our team will review it within one working day.',
-    trackUrl: 'status.html?requestId=' + row.RequestID
+    trackUrl: '?page=status&requestId=' + row.RequestID
   };
 }
 
@@ -178,11 +178,12 @@ function actionOwnerLogin(payload, ctx) {
   }
   var token = issueToken_({
     userId: 'owner', companyId: '', role: ROLES.OWNER,
-    name: 'Platform Owner', isOwner: true, ttl: 8 * 3600
+    name: 'Platform Owner', portal: 'admin', isOwner: true, ttl: 8 * 3600
   });
   platformAudit_('OWNER_LOGIN', {}, 'OK');
   return {
     token: token,
+    portal: 'admin',
     user: { UserID: 'owner', Name: 'Platform Owner', Role: ROLES.OWNER, Email: prop_(PROP.OWNER_EMAIL, '') },
     expiresIn: 8 * 3600
   };

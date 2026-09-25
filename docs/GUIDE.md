@@ -31,15 +31,15 @@ SiteTrack is a multi-tenant workforce system where **Google Sheets is the databa
 Apps Script is the server**. There is no VM, no container, no subscription, no SQL:
 
 ```
-   Worker phone (PWA)             Office laptop (web app)          Platform owner
-   frontend/mobile.html           frontend/app.html                frontend/owner.html
+   Worker phone (?page=mobile)    Office laptop (?page=app)        Platform admin panel
+   employee login (?page=employee) company login (?page=company)    (?page=owner)
             │                              │                              │
             └──────────────┬───────────────┴──────────────┬───────────────┘
                            │  POST text/plain JSON         │
                            ▼                               │
               ┌──────────────────────────────┐             │
               │  Google Apps Script Web App  │◄────────────┘
-              │  backend/*.gs   (99 actions)  │
+              │  backend/*.gs   (100 actions)  │
               │  token auth · permissions ·  │
               │  geofence · payroll · audit  │
               └───────────┬──────────┬───────┘
@@ -83,7 +83,8 @@ Apps Script is the server**. There is no VM, no container, no subscription, no S
 | Approve companies, set plan, suspend | ✔ | — | — | — | — |
 | Everything in the company | — | ✔ (all 23 permissions) | ✔ (15 by default) | only the ticks you grant | — |
 | Mark attendance, raise requests | — | — | — | — | ✔ (own records) |
-| UI used | `owner.html` | `app.html` | `app.html` | `app.html` | `mobile.html` |
+| Sign-in page | `?page=owner` (admin key) | `?page=company` | `?page=company` | `?page=company` | `?page=employee` |
+| App used | admin panel | `?page=app` | `?page=app` | `?page=app` | `?page=mobile` |
 
 ---
 
@@ -95,16 +96,18 @@ You need exactly two accounts and no credit card:
    (e.g. `sitetrack-ops@…`) rather than a personal one — everything (sheets, Drive files,
    the API's identity) is created as that user. A Google Workspace account raises the
    script quotas; a free consumer account works fine for a single company.
-2. **A GitHub account** (or any static host — Netlify, Vercel, Cloudflare Pages) for the
-   frontend. If you already host the frontend elsewhere, GitHub is optional.
+2. **Nothing else.** The frontend is part of the same Apps Script project, so there is no
+   GitHub account, no web host and no domain to configure: one `/exec` URL is the whole product.
 
 Optional but recommended:
 
-* **Node 18+** on your laptop: only for `npm run dev` (offline preview), `npm test`
-  (163-check end-to-end suite) and `npm run verify` (consistency checks). Not needed to deploy.
+* **Node 18+** on your laptop: only for `npm run dev` (offline preview of the real Web App),
+  `npm test` (224-check end-to-end suite) and `npm run verify` (consistency checks). Not needed
+  to deploy.
 * **A phone with Chrome** — the worker app asks for camera and location permissions.
-* **clasp** (`npm i -g @google/clasp`) — pushes `backend/` to the script project from the
-  command line. Without it you paste 22 files once; with it, updates take one command.
+* **clasp** (`npm i -g @google/clasp`) — pushes `backend/` (the `.gs` modules **and** the `.html`
+  pages/assets) to the script project from the command line. Without it you paste 40 files once;
+  with it, updates take one command.
 
 ### 2.1 Decide these before you install
 
@@ -114,8 +117,8 @@ Optional but recommended:
 | Working week | e.g. Mon–Sat, Sunday off | setup wizard step 4 |
 | Marking window | e.g. 06:00–11:00, cutoff 11:00 | setup wizard step 3 |
 | Geofence radius | default 200 m per project | project form |
-| Who approves signups | the platform owner's e-mail | `OWNER_EMAIL` |
-| Where the UI is hosted | GitHub Pages / Netlify / own domain | `frontend/config.js` |
+| Who approves signups | your (platform admin) e-mail | script property `OWNER_EMAIL` |
+| Where the UI is hosted | nowhere else — the Apps Script Web App serves it | nothing to configure |
 
 ### 2.2 Quota reality check
 
@@ -144,8 +147,14 @@ The consumer limits are generous but real. Plan for them:
    * `webapp.executeAs: "USER_DEPLOYING"` and `webapp.access: "ANYONE_ANONYMOUS"` — the latter
      is what lets a worker with no Google account sign in with a phone number.
 4. Delete the default `Code.gs`.
-5. For each file in `backend/` create a script with **the same name** (`.gs`) and paste the
-   contents. The leading number is only a reading order — Apps Script shares one global scope.
+5. For each file in `backend/` create a file with **exactly the same name, extension included**,
+   and paste the contents:
+   * `00_Config.gs` … `22_Frontend.gs` → **Script** files;
+   * `tmpl_*.html`, `app_css.html`, `*_js.html` → **HTML** files (`+ → HTML`).
+
+   Apps Script shares one global scope; the leading number is only a reading order. The
+   extension matters: Apps Script infers the file type from it, and `HtmlService` can only render
+   files it recognises as HTML.
 
 | # | File | What it owns |
 |---|---|---|
@@ -171,6 +180,31 @@ The consumer limits are generous but real. Plan for them:
 | 19 | `19_Triggers.gs` | the 5 scheduled jobs + trigger installer |
 | 20 | `20_Bootstrap.gs` | `setupScript()` (structure + secrets) and `diagnoseDeployment()` (audit) |
 | 21 | `21_Files.gs` | Drive upload/download, token-gated byte serving |
+| 22 | `22_Frontend.gs` | serves every page of the web app (`?page=…`), inlines the CSS/JS |
+
+**The frontend files — create these as _HTML_ files in the same project:**
+
+| File | What it is |
+|---|---|
+| `tmpl_index.html` | landing page (choose a portal) |
+| `tmpl_login.html` | small chooser pointing at both portals |
+| `tmpl_company.html` | **company login** → `?page=app` |
+| `tmpl_employee.html` | **employee login** → `?page=mobile` |
+| `tmpl_signup.html` | company registration request (lands in the admin panel) |
+| `tmpl_status.html` | public application tracker |
+| `tmpl_app.html` | company console (staff SPA) |
+| `tmpl_mobile.html` | employee app (worker SPA) |
+| `tmpl_owner.html` | **admin panel**: approve signups, companies, triggers, properties, audit |
+| `tmpl_config_js.html` | runtime config — reads its own `/exec` URL with `ScriptApp.getService().getUrl()` |
+| `app_css.html` | the design system (inlined into every page) |
+| `api_js.html` | API client, session, device fingerprint, offline queue, GPS/camera |
+| `ui_js.html` | DOM toolkit (toasts, modals, tables, theme) |
+| `auth_js.html` | shared sign-in engine for both portals |
+| `i18n_js.html` | English / हिंदी dictionary |
+| `map_js.html` | OpenStreetMap/Leaflet wrapper with a no-CDN fallback |
+| `admin_js.html` | company console views |
+| `mobile_js.html` | employee app views |
+| `owner_js.html` | admin panel views |
 
 6. **Save** (💾). With clasp instead of pasting: copy `.clasp.json.example` → `.clasp.json`,
    set `scriptId` to the id from the project URL, then `clasp push` from the repo root
@@ -234,7 +268,7 @@ coverage and warnings. Safe to paste into a support chat.
 
 ---
 
-## 6. Deploy the API and publish the frontend
+## 6. Deploy the Web App (API + frontend)
 
 ### 6.1 Deploy as Web App
 
@@ -245,7 +279,7 @@ coverage and warnings. Safe to paste into a support chat.
 
    ```json
    { "success": true, "data": { "app": "SiteTrack", "version": "1.0.0",
-     "actions": 99, "configured": true, "devMode": false, … } }
+     "actions": 100, "configured": true, "devMode": false, … } }
    ```
 
    `configured:false` means bootstrap did not run; an HTML login page instead of JSON means the
@@ -255,49 +289,49 @@ coverage and warnings. Safe to paste into a support chat.
 > backend change: **Deploy → Manage deployments → ✏️ → Version: New version → Deploy.**
 > The same is true for scope changes; you only re-consent when a *new* scope appears.
 
-### 6.2 Tell the frontend where the API is
+### 6.2 Nothing to point anywhere — the pages configure themselves
 
-Edit `frontend/config.js` — it is the only file you must touch:
+There is no build file to edit and no `API_URL` to paste. Every page is rendered by the same
+deployment that answers the API, and `tmpl_config_js.html` reads its own address with
+`ScriptApp.getService().getUrl()` at render time:
 
 ```js
-API_URL: 'https://script.google.com/macros/s/AKfycb…/exec',
-OWNER_KEY: '',            // leave BLANK in a published build; owner.html asks for it at runtime
+// inside tmpl_config_js.html (rendered by ?page=*)
+var scriptUrl = '<?= ScriptApp.getService().getUrl() ?>';   // → your /exec URL
+window.SITETRACK_CONFIG = { API_URL: scriptUrl, APP_NAME: 'SiteTrack', … };
 ```
 
-The other knobs: `APP_NAME`/`APP_TAGLINE` (branding in the shell), `SUPPORT_EMAIL`,
-`DEFAULT_LOCALE` (`en`/`hi`), `MAP_TILE_URL`, `SELFIE_WIDTH`/`SELFIE_QUALITY`,
-`GPS_TIMEOUT_MS` (20 000 — how long the worker app waits for a fix before offering QR),
-and the `FEATURES` flags (`offlineAttendance`, `qrFallback`, `weatherFlag`, `installPrompt`,
-`publicSignup`). Setting `publicSignup:false` hides signup and status pages — useful after the
-first tenants are onboarded.
+The runtime knobs live in that one file: `APP_NAME`/`APP_TAGLINE` (branding in the shell),
+`SUPPORT_EMAIL`, `DEFAULT_LOCALE` (`en`/`hi`), `MAP_TILE_URL`, `SELFIE_WIDTH`/`SELFIE_QUALITY`,
+`GPS_TIMEOUT_MS` (20 000 — how long the worker app waits for a fix before offering QR) and the
+`FEATURES` flags (`offlineAttendance`, `qrFallback`, `weatherFlag`, `installPrompt`,
+`publicSignup`). Setting `publicSignup:false` hides the signup and status pages — useful after
+your tenants are onboarded. Change it, then deploy a **new version**.
 
-No CORS setup is needed: the client POSTs `application/json`-shaped bodies as
-`Content-Type: text/plain`, which is a CORS-safe simple request, so Google never gets a
-pre-flight it cannot answer.
+No CORS setup is needed: the client POSTs JSON-shaped bodies as `Content-Type: text/plain`,
+a CORS-safe simple request, so Google never gets a pre-flight it cannot answer.
 
-### 6.3 Publish the static frontend
+### 6.3 The pages you now have (one URL, ten routes)
 
-Two supported routes:
+| Route | What the visitor sees | Who it is for |
+|---|---|---|
+| `?page=index` | landing page with the two sign-in buttons | public |
+| `?page=company` | **company login** (company code + user ID/e-mail/mobile + password or OTP) | Super Admin / Admin / Sub-Admin |
+| `?page=employee` | **employee login** (registered mobile number + OTP) | site workers |
+| `?page=login` | small chooser that points at the two portals above | public |
+| `?page=signup` | company registration request form | public (becomes a request in the admin panel) |
+| `?page=status` | application tracker (`REQ-…`) | public |
+| `?page=app` | company console (dashboard → audit log) | the company's staff |
+| `?page=mobile` | employee app (attendance button, leave, expenses, history) | the company's employees |
+| `?page=owner` (alias `?page=admin`) | **admin panel**: approve/reject signups, suspend tenants, triggers | you, with the `OWNER_KEY` |
 
-* **GitHub Pages (recommended).** Copy `deploy/github-pages.workflow.yml` →
-  `.github/workflows/pages.yml`, commit it from your own machine (GitHub refuses workflow files
-  pushed by app tokens), then **Settings → Pages → Source: GitHub Actions**. The workflow
-  publishes the `frontend/` folder, so the site root is the repo's `frontend` directory and all
-  links inside it are relative — nothing else to configure. Add a `frontend/.nojekyll` file if
-  you ever see missing assets (Jekyll can swallow dot-files).
-* **Any static host.** Netlify / Vercel / Cloudflare Pages / S3: point the publish directory at
-  `frontend/`. No build step, no bundler — the files are already final.
+### 6.4 Install the employee app on phones
 
-Then set **`SiteTrack API` → Cloud Console project → OAuth consent → Authorised domains** if you
-use a custom domain, and add the Pages/Netlify origin to nothing: the API is anonymous-by-design
-and authenticates its own tokens.
-
-### 6.4 Install the worker app on phones
-
-Open `mobile.html` on the phone → Chrome menu → **Add to Home screen**. The service worker
-(`frontend/sw.js`) caches the shell, so the app opens with no network; attendance taken offline
-is queued under the localStorage key `sitetrack.offlineQueue` and replayed when connectivity
-returns (validated against the *captured* timestamp, not the sync time).
+Open `?page=employee` on the phone, sign in, then Chrome menu → **Add to Home screen**. The
+installable shortcut opens `?page=mobile`. Apps Script cannot host a service worker file, so the
+shell is not cached by the browser; attendance taken with no network is still captured — it is
+queued under the localStorage key `sitetrack.offlineQueue` and replayed as soon as the phone is
+online again (validated against the *captured* timestamp, not the sync time).
 
 ---
 
@@ -305,13 +339,14 @@ returns (validated against the *captured* timestamp, not the sync time).
 
 Do this once per company; it is the only way a tenant can exist.
 
-1. **`signup.html`** — company name, GST/registration number, registered address, contact
+1. **`?page=signup`** — company name, GST/registration number, registered address, contact
    person, official e-mail, 10-digit mobile, industry, optional logo (printed on every report).
    Press **Send OTP**: a 6-digit code is e-mailed (plus SMS/WhatsApp if configured) and expires
    after 600 s. Typing it fires `verifyOtp`, which shows **Number verified** before you submit —
    `registerCompany` re-checks the same code server-side, so a "verified" tick cannot be replayed.
-   The result is a **Request ID** (`REQ-…`) you can track publicly at `status.html`.
-2. **`owner.html`** (not linked anywhere) — paste the owner key → **Signup requests** → open the
+   The result is a **Request ID** (`REQ-…`) you can track publicly at `?page=status`.
+2. **`?page=owner`** (the admin panel — not linked from the public pages) — paste the admin key →
+   **Signup requests** → open the
    pending row → check GST/address/contact → **Approve**. Approval, atomically:
    * creates `SiteTrack — <Company>` with **all 17 tabs**, headers, dropdown validations and
      conditional formatting;
@@ -319,7 +354,8 @@ Do this once per company; it is the only way a tenant can exist.
    * writes the `CompanyRegistry` row (the `LoginIndex` entry that resolves a phone number or
      e-mail to this tenant is written the first time that person signs in);
    * creates the **Super Admin** account and e-mails the temporary password.
-3. **`login.html`** — the Super Admin signs in with the e-mail (or user ID) and the temp
+3. **`?page=company`** — the Super Admin signs in with the e-mail (or user ID, plus the company
+   code `CMP-…` if you run more than one tenant) and the temp
    password. `mustChangePassword:true` is returned, so the UI forces a new password immediately
    (**≥ 8 characters, at least one letter and one number**). The device fingerprint is bound at
    this first login.
@@ -395,8 +431,10 @@ through the public flow with zero seeded rows** and sees nothing from the first.
 ### 9.2 Security checklist for production
 
 - [ ] `DEV_MODE=false` (or unset) — `?action=ping` must show `"devMode": false`.
-- [ ] `OWNER_KEY` is **not** in `frontend/config.js` in the published build.
-- [ ] Web app *Execute as: Me*, *Anyone* access, and the URL is only in `config.js`.
+- [ ] The admin key (`OWNER_KEY`) exists **only** as a script property — never pasted into a page,
+      a sheet or a commit. The admin panel asks for it at runtime.
+- [ ] Web app *Execute as: Me*, *Anyone* access, and the `/exec` URL is the only link you share
+      (it serves both the pages and the API).
 - [ ] `ALLOW_UNVERIFIED_SIGNUP` not set.
 - [ ] `SELFIE_MAX_BYTES` reasonable for your phones; `gpsRetentionMonths` set to your policy (default 12).
 - [ ] Password policy untouched (≥ 8 chars, letter + number) and `TOKEN_SECRET` never rotated casually.
@@ -410,9 +448,10 @@ through the public flow with zero seeded rows** and sees nothing from the first.
 
 ## 10. Backup, updates, migration, removal
 
-**Update the app.** Backend: `clasp push` (or paste the changed files) → new deployment version.
-Frontend: commit to `frontend/`; Pages republishes. `npm run check` before every push. Never
-edit a company sheet's header row — the store maps columns by header name, so adding columns is
+**Update the app.** One project, one push: `clasp push` (or paste the changed files into the
+editor) → **Deploy → Manage deployments → ✏️ → New version**. Pages and API always go out
+together because they live in the same script. Run `npm run check` before every push. Never edit
+a company sheet's header row — the store maps columns by header name, so adding columns is
 tolerated but renaming one is not.
 
 **Backup.** Drive → the `SiteTrack` folder → select all → Download (copies every workbook as
@@ -421,10 +460,11 @@ company workbooks into a backup folder; a company can also self-serve: Reports �
 Export `.xlsx`.
 
 **Migrate to another Google account.** Copy each workbook and the Drive folder tree to the new
-account (share → transfer ownership, or download/upload), create a fresh script project, run
-`setupScript()`, then update `PLATFORM_MASTER_ID` and `DRIVE_ROOT_ID` in the new project's script
-properties to the copied ids and republish the frontend with the new `API_URL`. Session tokens
-are signed by `TOKEN_SECRET`, so everybody signs in again — expected.
+account (share → transfer ownership, or download/upload), create a fresh script project with the
+same files, run `setupScript()`, then update `PLATFORM_MASTER_ID` and `DRIVE_ROOT_ID` in the new
+project's script properties to the copied ids and deploy. The new `/exec` URL serves the pages
+and the API together, so there is nothing else to reconfigure. Session tokens are signed by
+`TOKEN_SECRET`, so everybody signs in again — expected.
 
 **Close a company.** Owner panel → Companies → Status `Closed`. Login is refused immediately and
 the workbook + Drive folder stay available for the statutory retention period; delete them
@@ -437,11 +477,11 @@ the registry row.
 
 ## 11. Platform Owner (hidden panel)
 
-The owner is you, the operator of the platform — not a company manager. There is no link to this
-panel anywhere in the product (that is deliberate): open `owner.html` directly, e.g.
-`https://<you>.github.io/<repo>/owner.html`.
+You are the platform admin — not a company manager. This panel is where **every company signup
+request arrives for approval**. It is deliberately not linked from the public pages: open
+`<your /exec URL>?page=owner` (the alias `?page=admin` works too) and keep that link private.
 
-**Sign in** with the owner key from the bootstrap log. The key is sent as-is to `ownerLogin`; a
+**Sign in** with the admin key (`OWNER_KEY`) from the bootstrap log. The key is sent as-is to `ownerLogin`; a
 wrong key returns 401 with no hint about why. Sessions behave like any other (12 h) and the
 owner is never a user row in any company.
 
@@ -460,16 +500,18 @@ owner is never a user row in any company.
    your Drive, so an approved tenant consumes your quota.
 2. Suspensions are reversible; a `Closed` company is not. Prefer suspend → investigate → reinstate.
 3. Rejecting leaves the request row for the record; the applicant may submit a new request.
-4. Never put the owner key into `config.js` in a published build. If it leaks, re-run
-   `setupScript()` to rotate it (this also rotates `TOKEN_SECRET`, signing everyone out).
+4. Never put the admin key into a file or a chat message. If it leaks, re-run `setupScript()` to
+   rotate it (this also rotates `TOKEN_SECRET`, signing everyone out).
 5. Weekly: skim **Overview** for pending requests (each also arrives by e-mail to `OWNER_EMAIL`).
 
 ---
 
 ## 12. Super Admin — the company owner's console
 
-Sign in at `login.html` (e-mail or user ID + password, or mobile + OTP). The staff console
-(`app.html`) sidebar is one screen per job:
+Sign in at `?page=company` (user ID / e-mail / mobile + password, or a one-time code; add the
+`CMP-…` company code when you operate more than one company). Site employees sign in at the
+separate `?page=employee` door — an employee credential is refused here with a pointer to it.
+The console (`?page=app`) sidebar is one screen per job:
 
 **Dashboard** → today's numbers per project (expected / present / late / half-day / leave /
 absent / flagged / not-yet-marked), the live ticker of marks as they arrive, quick links to
@@ -578,8 +620,9 @@ More → Language → हिंदी. Everything the worker needs is on one scr
 
 **First use**
 
-1. Open `mobile.html` (or the installed icon), enter the mobile number given by the office and the
-   temp password — or press **Send OTP** and sign in with the 6-digit code, no password needed.
+1. Open `?page=employee` (or the installed icon), enter the mobile number given by the office — the
+   app sends a 6-digit code by SMS/e-mail. A temp password works on the **Password** tab if the
+   office gave you one.
 2. This first sign-in **binds the device** (a fingerprint of browser + screen + timezone). A new
    phone is refused for attendance until an admin approves the change request the app files for
    you.
@@ -1095,5 +1138,5 @@ from a laptop that also holds clasp credentials for dev.
 ---
 
 *End of the guide book.* Nothing in this product is hidden behind a support ticket: the backend is
-22 files of readable Apps Script, the frontend is 7 plain pages, and `npm run check` re-proves the
+23 files of readable Apps Script, the frontend is part of the same project, and `npm run check` re-proves the
 whole contract in about two seconds.

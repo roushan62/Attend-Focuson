@@ -1,16 +1,27 @@
 /**
  * ============================================================================
- *  dev/server.mjs — local preview server (zero npm dependencies)
+ *  dev/server.mjs — local preview of the Apps Script Web App (zero deps)
  *
- *  • Serves frontend/ as a static site (GitHub-Pages-compatible relative paths)
- *  • Proxies /api  →  the REAL backend/*.gs code running on the GAS polyfills
- *  • Auto-bootstraps an EMPTY Platform Master Sheet on first run (no demo or
- *    sample data exists in this project — create a company through the
- *    signup page + owner approval exactly like a real customer would)
- *  • /dev/* endpoints expose the mock outbox, logs and a data reset
+ *  There is no separate frontend to serve any more: every page comes out of
+ *  `doGet()` of the REAL backend code, exactly like script.google.com does it.
  *
- *  Run:  npm run dev      (or: node dev/server.mjs)
- *  Port: PORT env var, default 8080, bound to 0.0.0.0 for sandbox previews.
+ *    • GET /               → ?page=index      (landing, portal chooser)
+ *    • GET /company.html   → ?page=company    company (HR/Admin) sign-in
+ *    • GET /employee.html  → ?page=employee   employee sign-in
+ *    • GET /signup.html    → ?page=signup     company registration request
+ *    • GET /status.html    → ?page=status     public request tracker
+ *    • GET /app.html       → ?page=app        company console (after sign-in)
+ *    • GET /mobile.html    → ?page=mobile     employee app (after sign-in)
+ *    • GET /owner.html     → ?page=owner      admin panel (signup approvals)
+ *    • ANY /api?action=…   → the real JSON router (handleApi_)
+ *
+ *  The old *.html URLs are kept as aliases so bookmarks and the docs still
+ *  work; ?page=<route> works on any path.
+ *
+ *  Run:  npm run dev        Port: PORT env var, default 8080 (0.0.0.0)
+ *  Data: dev/data (gitignored JSON "spreadsheets" — an EMPTY platform is
+ *        bootstrapped on first run; companies exist only after you approve a
+ *        real signup request in the admin panel).
  * ============================================================================
  */
 import http from 'node:http';
@@ -21,26 +32,34 @@ import { loadBackend } from './gas/loader.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
-const FRONTEND_DIR = path.join(ROOT, 'frontend');
 const DATA_DIR = path.join(ROOT, 'dev', 'data');
 const PORT = Number(process.env.PORT || 8080);
 const HOST = '0.0.0.0';
 
-const MIME = {
-  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
-  '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
-  '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml',
-  '.png': 'image/png', '.jpg': 'image/jpeg', '.ico': 'image/x-icon',
-  '.webmanifest': 'application/manifest+json', '.txt': 'text/plain; charset=utf-8',
-  '.woff2': 'font/woff2', '.map': 'application/json'
-};
-
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
+
+/* ------------------------------------------------------------------ pages */
+const PAGE_ALIASES = {
+  '/': 'index',
+  '/index': 'index', '/index.html': 'index',
+  '/login': 'login', '/login.html': 'login',
+  '/company': 'company', '/company.html': 'company',
+  '/employee': 'employee', '/employee.html': 'employee',
+  '/signup': 'signup', '/signup.html': 'signup',
+  '/status': 'status', '/status.html': 'status',
+  '/app': 'app', '/app.html': 'app',
+  '/mobile': 'mobile', '/mobile.html': 'mobile',
+  '/owner': 'owner', '/owner.html': 'owner',
+  '/admin': 'admin', '/admin.html': 'owner'
+};
 
 /* ---------------------------------------------------------------- backend */
 fs.mkdirSync(DATA_DIR, { recursive: true });
+// serviceUrl '' → the pages fall back to the RELATIVE /api path, which this
+// server proxies; on real Apps Script the same line resolves to the /exec URL.
 const app = loadBackend({ dataDir: DATA_DIR, verbose: process.env.VERBOSE === '1' });
-log(`backend loaded (${app.sources.length} Apps Script modules)`);
+const htmlFiles = fs.readdirSync(path.join(ROOT, 'backend')).filter((f) => f.endsWith('.html'));
+log(`backend loaded: ${app.sources.length} Apps Script modules + ${htmlFiles.length} HTML pages/assets`);
 
 let bootInfo = null;
 function bootstrapIfNeeded() {
@@ -57,14 +76,14 @@ function bootstrapIfNeeded() {
 
 const boot = bootstrapIfNeeded();
 if (boot && boot.ownerKey) {
-  console.log('\n\x1b[1m\x1b[36m  SiteTrack dev backend ready — empty platform (no demo data)\x1b[0m');
+  console.log('\n\x1b[1m\x1b[36m  SiteTrack preview — Apps Script Web App on Node (empty platform, no demo data)\x1b[0m');
   console.log('  \x1b[2mplatform master sheet:\x1b[0m', boot.masterSheetId);
-  console.log('  \x1b[2mplatform owner key:   \x1b[0m', boot.ownerKey);
-  console.log('  \x1b[2mstart here:           \x1b[0m /signup.html  → then approve at /owner.html with the key above');
+  console.log('  \x1b[2madmin panel key:      \x1b[0m', boot.ownerKey);
+  console.log('  \x1b[2mflow:                 \x1b[0m /signup.html → approve in /owner.html → /company.html');
   console.log('');
 }
 
-/* ------------------------------------------------------------------ http */
+/* ------------------------------------------------------------------- http */
 function send(res, code, body, headers = {}) {
   const buf = Buffer.isBuffer(body) ? body : Buffer.from(String(body));
   res.writeHead(code, {
@@ -89,37 +108,14 @@ function readBody(req) {
   });
 }
 
-function serveStatic(req, res, urlPath) {
-  let rel = decodeURIComponent(urlPath.split('?')[0]);
-  if (rel === '/' || rel === '') rel = '/index.html';
-  const filePath = path.join(FRONTEND_DIR, rel);
-  if (!filePath.startsWith(FRONTEND_DIR)) return send(res, 403, 'Forbidden');
-  let target = filePath;
-  try {
-    const st = fs.statSync(target);
-    if (st.isDirectory()) target = path.join(target, 'index.html');
-  } catch {
-    if (!path.extname(target)) target += '.html';
-  }
-  if (!fs.existsSync(target) || fs.statSync(target).isDirectory()) {
-    return send(res, 404, `Not found: ${rel}\n`, { 'Content-Type': 'text/plain' });
-  }
-  const ext = path.extname(target).toLowerCase();
-  const body = fs.readFileSync(target);
-  const headers = { 'Content-Type': MIME[ext] || 'application/octet-stream' };
-  if (ext === '.html') headers['Cache-Control'] = 'no-cache';
-  if (target.endsWith('sw.js')) headers['Service-Worker-Allowed'] = '/';
-  send(res, 200, body, headers);
-}
-
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   const p = url.pathname;
 
   if (req.method === 'OPTIONS') return send(res, 204, '');
 
-  /* ---- API proxy → the real Apps Script router ------------------------ */
-  if (p === '/api' || p === '/api/' || p.startsWith('/api/gas')) {
+  /* ---- API → the real Apps Script router ------------------------------ */
+  if (p === '/api' || p === '/api/') {
     try {
       const started = Date.now();
       let params = {};
@@ -130,7 +126,7 @@ const server = http.createServer(async (req, res) => {
         params = body;
       } else {
         url.searchParams.forEach((v, k) => { params[k] = v; });
-        if (params.payload) { try { params.payload = JSON.parse(params.payload); } catch { /* keep string */ } }
+        if (typeof params.payload === 'string') { try { params.payload = JSON.parse(params.payload); } catch { /* keep string */ } }
       }
       const token = params.token || (req.headers.authorization || '').replace(/^Bearer\s+/i, '') || '';
       const method = req.method === 'GET' ? 'GET' : 'POST';
@@ -138,7 +134,8 @@ const server = http.createServer(async (req, res) => {
         token, method, userAgent: req.headers['user-agent'] || 'dev-browser'
       });
       log(`API ${method} ${params.action || '?'} → ${out.success ? 'ok' : 'ERR ' + (out.error && out.error.code)} (${Date.now() - started}ms)`);
-      return sendJson(res, out.success ? 200 : (out.error && out.error.code >= 400 && out.error.code < 600 ? out.error.code : 200), out);
+      const code = out.success ? 200 : (out.error && out.error.code >= 400 && out.error.code < 600 ? out.error.code : 200);
+      return sendJson(res, code, out);
     } catch (e) {
       log('API crash:', e.message);
       return sendJson(res, 500, { success: false, error: { message: e.message, code: 500 } });
@@ -149,7 +146,8 @@ const server = http.createServer(async (req, res) => {
   if (p === '/dev/state') {
     const props = app.context.PropertiesService.getScriptProperties().getProperties();
     return sendJson(res, 200, {
-      boot: bootInfo, properties: { ...props, OWNER_KEY: '***', TOKEN_SECRET: '***' },
+      boot: bootInfo,
+      properties: { ...props, OWNER_KEY: '***', TOKEN_SECRET: '***' },
       spreadsheets: fs.existsSync(path.join(DATA_DIR, 'sheets')) ? fs.readdirSync(path.join(DATA_DIR, 'sheets')) : [],
       driveFiles: Object.keys(app.dev.driveState.files || {}).length,
       emails: app.dev.outbox.length, fetches: app.dev.fetchLog.length,
@@ -171,12 +169,22 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, 200, { reset: true, boot: bootInfo });
   }
 
-  /* ---- static frontend ------------------------------------------------- */
-  return serveStatic(req, res, p + url.search);
+  /* ---- every other path is a page rendered by doGet() ------------------ */
+  const route = url.searchParams.get('page') || PAGE_ALIASES[p.replace(/\/$/, '') || '/'] || PAGE_ALIASES[p];
+  if (!route) return send(res, 404, 'Not found: ' + p + '\nRoutes: / /company.html /employee.html /signup.html /status.html /app.html /mobile.html /owner.html\n', { 'Content-Type': 'text/plain; charset=utf-8' });
+  try {
+    const html = app.page(route, Object.fromEntries(url.searchParams.entries()));
+    return send(res, 200, html, { 'Content-Type': 'text/html; charset=utf-8' });
+  } catch (e) {
+    log('page crash:', e.message);
+    return send(res, 500, '<pre>' + String(e.stack || e.message) + '</pre>', { 'Content-Type': 'text/html; charset=utf-8' });
+  }
 });
 
 server.listen(PORT, HOST, () => {
   log(`SiteTrack preview → http://${HOST}:${PORT}`);
-  log(`  landing  /index.html   signup /signup.html   owner /owner.html`);
-  log(`  staff    /app.html     mobile /mobile.html   api    /api?action=ping`);
+  log('  public   /              signup /signup.html    status /status.html');
+  log('  sign-in  /company.html  /employee.html');
+  log('  apps     /app.html      /mobile.html           admin  /owner.html');
+  log('  api      /api?action=ping');
 });

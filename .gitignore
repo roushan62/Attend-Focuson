@@ -1,7 +1,6 @@
-# --- local dev harness state (Google-Sheets polyfill writes JSON here) -------
+# --- local dev harness state (the Apps Script polyfill writes JSON here) -----
 dev/data/
 dev/data-test/
-dev/data-hrms/
 
 # --- node / editors ----------------------------------------------------------
 node_modules/

@@ -1,0 +1,189 @@
+/* ============================================================================
+   auth_js.html — shared sign-in engine for the two separate portals
+   ---------------------------------------------------------------------------
+   The company console and the employee app have their own pages, their own
+   fields and their own API actions, but the mechanics (mode tabs, OTP,
+   forced password change, new-device notice, redirect) are identical, so they
+   live here once.
+
+        ST.auth.mount({ portal: 'company' })   →  ?page=company  →  ?page=app
+        ST.auth.mount({ portal: 'employee' })  →  ?page=employee →  ?page=mobile
+
+   Nothing is trusted from the browser: the server decides whether a user
+   belongs to the portal (actionCompanyLogin / actionEmployeeLogin).
+   ========================================================================== */
+window.ST = window.ST || {};
+
+(function () {
+  'use strict';
+
+  var ui = ST.ui, api = ST.api;
+  var h = ui.h, el = ui.el, toast = ui.toast;
+
+  /* Where each portal sends the user after a successful sign-in. */
+  var HOME = { company: 'app', employee: 'mobile', admin: 'owner' };
+
+  function homeFor(user) {
+    var role = String((user && user.role) || '');
+    if (role === 'PlatformOwner' || role === 'owner') return HOME.admin;
+    if (role === 'Employee' || role === 'SiteEmployee') return HOME.employee;
+    return HOME.company;
+  }
+
+  /* -------------------------------------------------------------- session */
+  function existingSession(portal) {
+    var s = api.session;
+    if (!s.token || !s.data) return Promise.resolve(false);
+    return api.call('me', {}).then(function (res) {
+      if (!res.success) { s.clear(); return false; }
+      var role = String((res.data.user && res.data.user.role) || '');
+      var isEmployee = (role === 'Employee' || role === 'SiteEmployee');
+      var wanted = portal === 'company' ? !isEmployee : isEmployee;
+      if (!wanted) {
+        // A signed-in user of the other portal: send them to their own home.
+        ui.go(homeFor(res.data.user));
+        return true;
+      }
+      s.save(s.token, Object.assign({}, s.data, res.data));
+      ui.go(homeFor(res.data.user));
+      return true;
+    }).catch(function () { return false; });
+  }
+
+  /* ------------------------------------------------------------ password */
+  function forcePasswordChange(data, portal, done) {
+    var cp = h('input', { type: 'password', placeholder: 'Current / temporary password', value: (el('password') || {}).value || '' });
+    var np = h('input', { type: 'password', placeholder: 'New password (min 8 chars, letter + number)' });
+    var np2 = h('input', { type: 'password', placeholder: 'Repeat new password' });
+    ui.render(el('postLogin'), h('div.warn-box', [
+      h('h4', null, '🔐 ' + ST.i18n.t('setNewPassword')),
+      h('p.tiny', null, 'This account was created with a temporary password. Choose your own password to continue.'),
+      h('div.field.mt', null, cp),
+      h('div.field', null, np),
+      h('div.field', null, np2),
+      h('button.btn.primary.mt', {
+        onclick: function () {
+          if (np.value.length < 8) return toast('Password must be at least 8 characters', 'bad');
+          if (np.value !== np2.value) return toast('Passwords do not match', 'bad');
+          api.must('changePassword', { currentPassword: cp.value, newPassword: np.value }).then(function () {
+            toast(ST.i18n.t('passwordChanged'), 'good');
+            data.mustChangePassword = false;
+            api.session.save(data.token, data);
+            done();
+          }).catch(function (e) { toast(e.message, 'bad'); });
+        }
+      }, 'Save & continue')
+    ]));
+    setTimeout(function () { cp.focus(); }, 60);
+  }
+
+  /* --------------------------------------------------------- new device */
+  function deviceNotice(data, done) {
+    ui.render(el('postLogin'), h('div.warn-box', [
+      h('h4', null, '📵 New device detected'),
+      h('p.tiny', null, (data.device && data.device.reason) || 'This phone is not the registered device for your account.'),
+      h('div.row.mt', null, [
+        h('button.btn.primary', { onclick: done }, 'Continue anyway'),
+        h('button.btn.ghost', { onclick: function () { api.session.clear(); el('postLogin').hidden = true; } }, 'Sign out')
+      ])
+    ]));
+  }
+
+  function afterLogin(data, portal) {
+    api.session.save(data.token, data);
+    var done = function () { ui.go(homeFor(data.user)); };
+    if (data.mustChangePassword) return forcePasswordChange(data, portal, done);
+    if (data.device && data.device.ok === false && data.device.status === 'ChangePending') return deviceNotice(data, done);
+    done();
+  }
+
+  /* ---------------------------------------------------------------- mount */
+  function mount(opts) {
+    var portal = (opts && opts.portal) || 'company';
+    var action = portal === 'employee' ? 'employeeLogin' : 'companyLogin';
+    var otpAction = portal === 'employee' ? 'employeeSendOtp' : 'companySendOtp';
+    var mode = portal === 'employee' ? 'otp' : 'password';
+    var busy = false;
+
+    document.documentElement.setAttribute('data-portal', portal);
+
+    if (ST.i18n) ST.i18n.apply(document.body);
+
+    /* prefill from the URL:  ?page=company&company=CMP-XXXX&id=user@x.com */
+    var q = new URLSearchParams(location.search);
+    if (q.get('company') && el('companyCode')) el('companyCode').value = q.get('company');
+    if (q.get('id') && el('identifier')) el('identifier').value = q.get('id');
+    if (q.get('mode') === 'otp' || q.get('mode') === 'password') mode = q.get('mode');
+
+    function paintMode() {
+      ui.qsa('#modeTabs .tab').forEach(function (b) { b.classList.toggle('active', b.dataset.mode === mode); });
+      el('pwWrap').hidden = mode !== 'password';
+      el('otpWrap').hidden = mode !== 'otp';
+      el('loginBtn').textContent = ST.i18n ? ST.i18n.t('signIn') : 'Sign in';
+    }
+    ui.qsa('#modeTabs .tab').forEach(function (btn) {
+      btn.addEventListener('click', function () { mode = btn.dataset.mode; paintMode(); });
+    });
+    paintMode();
+
+    function payload(extra) {
+      var out = extra || {};
+      out.identifier = el('identifier').value.trim();
+      if (el('companyCode') && el('companyCode').value.trim()) out.companyId = el('companyCode').value.trim().toUpperCase();
+      return out;
+    }
+
+    el('sendOtpBtn').addEventListener('click', function () {
+      var p = payload();
+      if (!p.identifier) return toast(ST.i18n ? ST.i18n.t('enterId') : 'Enter your user ID, e-mail or mobile', 'bad');
+      el('sendOtpBtn').disabled = true;
+      api.must(otpAction, p).then(function (res) {
+        el('sendOtpBtn').disabled = false;
+        el('otpHint').textContent = (res.devCode ? 'Dev code: ' + res.devCode + ' · ' : '') +
+          'Sent via ' + res.channel + ' to ' + res.maskedIdentifier;
+        toast(ST.i18n ? ST.i18n.t('otpSent') : 'OTP sent', 'good');
+      }).catch(function (e) { el('sendOtpBtn').disabled = false; toast(e.message, 'bad'); });
+    });
+
+    function signIn() {
+      if (busy) return;
+      var p = payload();
+      if (!p.identifier) return toast(ST.i18n ? ST.i18n.t('enterId') : 'Enter your user ID, e-mail or mobile', 'bad');
+      busy = true;
+      el('loginBtn').disabled = true;
+      var request = mode === 'password'
+        ? api.must(action, payload({ password: el('password').value }))
+        : api.must(action, payload({ otp: el('otp').value.trim() }));
+
+      request.then(function (data) {
+        busy = false; el('loginBtn').disabled = false;
+        afterLogin(data, portal);
+      }).catch(function (e) {
+        busy = false; el('loginBtn').disabled = false;
+        toast(e.message, 'bad');
+        if (e.code === 403) {
+          // Wrong door (company vs employee) — give the visitor the right link.
+          el('postLogin').hidden = false;
+          ui.render(el('postLogin'), h('div.warn-box', [
+            h('p.tiny', null, e.message),
+            h('a.btn.sm.mt', { href: portal === 'company' ? '?page=employee' : '?page=company' },
+              portal === 'company' ? 'Go to Employee login' : 'Go to Company login')
+          ]));
+        }
+      });
+    }
+
+    el('loginBtn').addEventListener('click', signIn);
+    document.addEventListener('keydown', function (e) { if (e.key === 'Enter') signIn(); });
+
+    el('forgotLink') && el('forgotLink').addEventListener('click', function (e) {
+      e.preventDefault();
+      mode = 'otp'; paintMode();
+      toast('Use the OTP tab: we will send a one-time code to your registered mobile number.', 'good');
+    });
+
+    existingSession(portal);
+  }
+
+  window.ST.auth = { mount: mount, homeFor: homeFor };
+})();

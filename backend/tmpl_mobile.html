@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>SiteTrack — Site staff app</title>
+<meta name="description" content="SiteTrack worker app: GPS + selfie attendance, leave, expenses and history — works offline.">
+<meta name="theme-color" content="#0b1220">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<?!= includeCss_('app_css') ?>
+</head>
+<body class="mobile-body">
+
+<section id="loginPanel" class="auth-shell">
+  <div class="auth-card" style="max-width:420px">
+    <div class="auth-head">
+      <div class="logo"><?!= logoSvgLarge_() ?></div>
+      <h1 data-i18n="employeeLogin">Employee login</h1>
+      <p class="sub" data-i18n="employeeLoginSub">Site workers sign in with the mobile number registered by the office — no password to remember.</p>
+    </div>
+    <div id="staffNote"></div>
+    <a class="btn primary wfull mt" href="?page=employee" data-i18n="signIn">Open employee sign-in</a>
+    <p class="tiny muted mt" style="text-align:center">
+      Company / HR staff? <a href="?page=company" data-i18n="companyLogin">Company login</a> ·
+      <a href="?page=index" data-i18n="backHome">Back to home</a>
+    </p>
+  </div>
+</section>
+
+<div id="appShell" hidden>
+  <header class="mhead-bar">
+    <span class="brand"><?!= logoSvg_() ?><span class="brand-name">SiteTrack</span></span>
+    <span class="grow"></span>
+    <span class="col" style="text-align:right">
+      <b id="mName"></b>
+      <span class="tiny muted" id="mRole"></span>
+    </span>
+    <span class="dot-wrap">🔔<span class="dot" id="mBellDot" hidden></span></span>
+  </header>
+
+  <main class="mview" id="mview"></main>
+
+  <nav class="tabbar" id="tabbar"></nav>
+</div>
+
+<div id="toasts"></div>
+
+<?!= includeJs_('tmpl_config_js') ?>
+<?!= includeJs_('i18n_js') ?>
+<?!= includeJs_('api_js') ?>
+<?!= includeJs_('ui_js') ?>
+<?!= includeJs_('mobile_js') ?>
+<script>
+  ST.ui.applyTheme();
+  ST.i18n.apply(document.body);
+  ST.mobile.boot();
+</script>
+</body>
+</html>

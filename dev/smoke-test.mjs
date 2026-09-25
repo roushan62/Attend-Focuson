@@ -164,7 +164,7 @@ async function main() {
 
   // ---- Phase 2: login, wizard, projects, users --------------------------
   head('Phase 2 — Login, setup wizard, projects, users & assignments');
-  const saLogin = api(app, 'login', {
+  const saLogin = api(app, 'companyLogin', {
     identifier: 'founder@acmefitout.example', password: tempPassword,
     deviceFingerprint: 'fp-superadmin-desktop-001', companyId
   });
@@ -173,11 +173,11 @@ async function main() {
   check('device bound on first login', saLogin.data.device.status === 'Bound', saLogin.data.device.status);
   const saToken = saLogin.data.token;
 
-  api(app, 'login', { identifier: superAdminId, password: 'wrong-password', companyId }, { expectError: 401 });
+  api(app, 'companyLogin', { identifier: superAdminId, password: 'wrong-password', companyId }, { expectError: 401 });
 
   const pwd = api(app, 'changePassword', { currentPassword: tempPassword, newPassword: 'Acme@2026x' }, { token: saToken });
   check('password changed', pwd.ok && pwd.data.mustChangePassword === false);
-  const saLogin2 = api(app, 'login', { identifier: superAdminId, password: 'Acme@2026x', deviceFingerprint: 'fp-superadmin-desktop-001', companyId });
+  const saLogin2 = api(app, 'companyLogin', { identifier: superAdminId, password: 'Acme@2026x', deviceFingerprint: 'fp-superadmin-desktop-001', companyId });
   check('login works with the new password', saLogin2.ok);
   const saToken2 = saLogin2.data.token;
 
@@ -267,9 +267,64 @@ async function main() {
   const assign2 = api(app, 'assignEmployee', { projectId: p2, userId: employees[0].userId, roleOnSite: 'Supervisor' }, { token: saToken2 });
   check('employee assigned to a second project', assign2.ok);
 
+  // ---- Phase 2b: the two sign-in portals are separate -------------------
+  head('Phase 2b — Company portal vs Employee portal');
+
+  // The company door refuses worker credentials and vice versa, and both doors
+  // resolve the SAME company sheet (no second database anywhere).
+  api(app, 'companyLogin', { identifier: employees[0].mobile, password: employees[0].password, companyId },
+    { expectError: 403 });
+  check('company portal refuses a worker account', true);
+
+  api(app, 'employeeLogin', { identifier: superAdminId, password: 'Acme@2026x', companyId },
+    { expectError: 403 });
+  check('employee portal refuses an HR/admin account', true);
+
+  const saPortal = api(app, 'companyLogin', { identifier: 'founder@acmefitout.example', password: 'Acme@2026x' });
+  check('company portal signs in with e-mail only (no company code)', saPortal.ok && saPortal.data.portal === 'company');
+  check('company session resolves the tenant sheet', saPortal.data.company.companyId === companyId, saPortal.data.company.companyId);
+
+  const empBadDoor = api(app, 'employeeLogin', { identifier: employees[0].mobile, password: employees[0].password, companyId });
+  check('employee portal signs in with the mobile number', empBadDoor.ok && empBadDoor.data.portal === 'employee');
+  check('employee session carries no staff permissions', Object.keys(empBadDoor.data.permissions).length === 0);
+
+  const empDoorOnStaffAction = api(app, 'todayDashboard', {}, { token: empBadDoor.data.token, expectError: 403 });
+  check('a staff-only action is blocked for an employee token', empDoorOnStaffAction.res.error.code === 403);
+
+  // OTP door per portal
+  const otpForStaff = api(app, 'employeeSendOtp', { identifier: 'founder@acmefitout.example' }, { expectError: 403 });
+  check('employee OTP door refuses an HR/admin number', otpForStaff.res.error.code === 403);
+  const empOtp = api(app, 'employeeSendOtp', { identifier: employees[1].mobile });
+  check('employee OTP issued for a worker', empOtp.ok && /^\d{6}$/.test(empOtp.data.devCode || ''), empOtp.data && empOtp.data.channel);
+  const empOtpLogin = api(app, 'employeeLogin', { identifier: employees[1].mobile, otp: empOtp.data.devCode, deviceFingerprint: 'fp-imran-iphone-02' });
+  check('employee signs in with the one-time code', empOtpLogin.ok && empOtpLogin.data.portal === 'employee');
+  const compOtp = api(app, 'companySendOtp', { identifier: superAdminId });
+  check('company OTP issued for an HR/admin', compOtp.ok && /^\d{6}$/.test(compOtp.data.devCode || ''), compOtp.data && compOtp.data.channel);
+  const compOtpLogin = api(app, 'companyLogin', { identifier: superAdminId, otp: compOtp.data.devCode, deviceFingerprint: 'fp-superadmin-desktop-001' });
+  check('company signs in with the one-time code', compOtpLogin.ok && compOtpLogin.data.portal === 'company');
+
+  // Every page of the web app is rendered by the same Apps Script deployment.
+  const routes = {
+    index: 'SiteTrack', login: 'Choose your sign-in', company: 'id="companyCode"', employee: 'id="identifier"',
+    signup: 'Register', status: 'status', app: 'id="sidenav"', mobile: 'id="tabbar"', owner: 'Administrator key'
+  };
+  Object.entries(routes).forEach(([route, marker]) => {
+    const html = app.page(route);
+    check(`?page=${route} renders`, typeof html === 'string' && html.includes(marker) && !html.includes('<?'), `${html.length} bytes`);
+  });
+  const fallback = app.page('does-not-exist');
+  check('unknown ?page= falls back to the landing page', fallback === app.page('index'));
+
+  const pageCss = app.page('company');
+  check('pages inline their CSS and JS (no external host)', pageCss.includes('<style>') && pageCss.includes('<script>'));
+
+  const companyHtml = app.page('company');
+  check('company page links to the employee page, not a .html file',
+    companyHtml.includes('?page=employee') && !/href="[^"]*\.html"/.test(companyHtml));
+
   // ---- Phase 3: attendance engine ---------------------------------------
   head('Phase 3 — Attendance engine (GPS + selfie + geofence + window + device)');
-  const empLogin = api(app, 'login', {
+  const empLogin = api(app, 'employeeLogin', {
     identifier: employees[0].mobile, password: employees[0].password,
     deviceFingerprint: 'fp-suresh-pixel-01'
   });
@@ -278,9 +333,9 @@ async function main() {
   check('employee sees the assigned projects', empLogin.data.assignments.length === 2,
     empLogin.data.assignments.map((a) => a.projectName).join(' | '));
 
-  const emp2Login = api(app, 'login', { identifier: employees[1].mobile, password: employees[1].password, deviceFingerprint: 'fp-imran-iphone-02' });
+  const emp2Login = api(app, 'employeeLogin', { identifier: employees[1].mobile, password: employees[1].password, deviceFingerprint: 'fp-imran-iphone-02' });
   const emp2Token = emp2Login.data.token;
-  const emp3Login = api(app, 'login', { identifier: employees[2].mobile, password: employees[2].password, deviceFingerprint: 'fp-anil-redmi-03' });
+  const emp3Login = api(app, 'employeeLogin', { identifier: employees[2].mobile, password: employees[2].password, deviceFingerprint: 'fp-anil-redmi-03' });
   const emp3Token = emp3Login.data.token;
   check('second + third employees logged in', emp2Login.ok && emp3Login.ok);
 
@@ -331,7 +386,7 @@ async function main() {
   check('project time window can be overridden', narrow.ok && narrow.data.project.windowEnd === '01:30',
     narrow.data && `${narrow.data.project.windowStart}–${narrow.data.project.windowEnd}`);
   api(app, 'saveSettings', { settings: { lateGraceMinutes: 0 } }, { token: saToken2 });
-  const emp4Login = api(app, 'login', { identifier: employees[3].mobile, password: employees[3].password, deviceFingerprint: 'fp-ravi-oppo-04' });
+  const emp4Login = api(app, 'employeeLogin', { identifier: employees[3].mobile, password: employees[3].password, deviceFingerprint: 'fp-ravi-oppo-04' });
   const outsideWindow = api(app, 'markAttendance', {
     projectId: p2, lat: p2Lat, lng: p2Lng, accuracy: 10, selfieBase64: TINY_PNG,
     deviceFingerprint: 'fp-ravi-oppo-04'
@@ -343,7 +398,7 @@ async function main() {
   api(app, 'saveSettings', { settings: { lateGraceMinutes: 30 } }, { token: saToken2 });
 
   // device binding (anti-proxy)
-  const newDevice = api(app, 'login', { identifier: employees[0].mobile, password: employees[0].password, deviceFingerprint: 'fp-someone-elses-phone' });
+  const newDevice = api(app, 'employeeLogin', { identifier: employees[0].mobile, password: employees[0].password, deviceFingerprint: 'fp-someone-elses-phone' });
   check('login still works from a new device', newDevice.ok && newDevice.data.device.ok === false, newDevice.data && newDevice.data.device.reason.slice(0, 90));
   const proxyToken = newDevice.data.token;
   const proxyMark = api(app, 'markAttendance', {
@@ -357,7 +412,7 @@ async function main() {
   check('admin sees the pending device', devices.ok && devices.data.count >= 1);
   const approveDevice = api(app, 'approveDeviceChange', { deviceId: devices.data.devices[0].deviceId, decision: 'approve' }, { token: saToken2 });
   check('device change approved', approveDevice.ok);
-  const afterDevice = api(app, 'login', { identifier: employees[0].mobile, password: employees[0].password, deviceFingerprint: 'fp-someone-elses-phone' });
+  const afterDevice = api(app, 'employeeLogin', { identifier: employees[0].mobile, password: employees[0].password, deviceFingerprint: 'fp-someone-elses-phone' });
   check('new device now trusted', afterDevice.ok && afterDevice.data.device.ok === true, afterDevice.data && afterDevice.data.device.status);
 
   // Employees -> Devices screen: block a phone, let the worker see it, give it back
@@ -389,7 +444,7 @@ async function main() {
   // QR fallback
   const qr = api(app, 'projectQrCode', { projectId: p1 }, { token: saToken2 });
   check('site QR payload issued', qr.ok && qr.data.payload.startsWith('SITETRACK|'), qr.data && qr.data.payload);
-  const emp5Login = api(app, 'login', { identifier: employees[4].mobile, password: employees[4].password, deviceFingerprint: 'fp-deepak-vivo-05' });
+  const emp5Login = api(app, 'employeeLogin', { identifier: employees[4].mobile, password: employees[4].password, deviceFingerprint: 'fp-deepak-vivo-05' });
   const qr2 = api(app, 'projectQrCode', { projectId: p2 }, { token: saToken2 });
   const qrMark = api(app, 'qrCheckin', {
     qrPayload: qr2.data.payload, selfieBase64: TINY_PNG, deviceFingerprint: 'fp-deepak-vivo-05'
@@ -405,7 +460,7 @@ async function main() {
 
   // offline-first batch sync (Vikram is on p2 and gets a second assignment on p1)
   api(app, 'assignEmployee', { projectId: p1, userId: employees[5].userId, roleOnSite: 'Plumber' }, { token: saToken2 });
-  const emp6Login = api(app, 'login', { identifier: employees[5].mobile, password: employees[5].password, deviceFingerprint: 'fp-vikram-moto-06' });
+  const emp6Login = api(app, 'employeeLogin', { identifier: employees[5].mobile, password: employees[5].password, deviceFingerprint: 'fp-vikram-moto-06' });
   const twoHoursAgo = new Date(Date.now() - 2 * 3600 * 1000).toISOString();
   const batch = api(app, 'markAttendance', {
     deviceFingerprint: 'fp-vikram-moto-06',
@@ -604,7 +659,7 @@ async function main() {
 
   // ---- Phase 7: permissions, scope, audit --------------------------------
   head('Phase 7 — Role-based data masking & server-side scope enforcement');
-  const subLogin = api(app, 'login', { identifier: subId, password: subPassword, deviceFingerprint: 'fp-priya-laptop-01', companyId });
+  const subLogin = api(app, 'companyLogin', { identifier: subId, password: subPassword, deviceFingerprint: 'fp-priya-laptop-01', companyId });
   check('sub-admin login', subLogin.ok);
   const subToken = subLogin.data.token;
   check('sub-admin permission set honoured', subLogin.data.permissions.approveLeave === true && subLogin.data.permissions.createProjects !== true);
@@ -624,7 +679,7 @@ async function main() {
   check('sub-admin approvals queue works', subApprove.ok);
   api(app, 'listAuditLog', {}, { token: subToken, expectError: 403 });
 
-  const adminLogin = api(app, 'login', { identifier: adminId, password: adminPassword, deviceFingerprint: 'fp-rahul-laptop-01', companyId });
+  const adminLogin = api(app, 'companyLogin', { identifier: adminId, password: adminPassword, deviceFingerprint: 'fp-rahul-laptop-01', companyId });
   const adminToken = adminLogin.data.token;
   api(app, 'createUser', { name: 'Sneaky Admin', role: 'Admin', mobile: '+919811100777' }, { token: adminToken, expectError: 403 });
   check('admin cannot create other admins (§2)', true);
@@ -740,7 +795,7 @@ async function main() {
   const co2User = appr2.data.superAdminUserId;
   const co2Pass = appr2.data.tempPassword;
 
-  const sa2 = api(app, 'login', {
+  const sa2 = api(app, 'companyLogin', {
     identifier: co2User, password: co2Pass, companyId: co2, deviceFingerprint: 'fp-buildwell-desk-01'
   });
   check('new tenant super admin signs in', sa2.ok && sa2.data.mustChangePassword === true);
@@ -792,7 +847,7 @@ async function main() {
   check('new tenant creates its first worker', emp2c.ok && emp2c.data.role === 'Employee',
     emp2c.data && emp2c.data.userId);
 
-  const emp2cLogin = api(app, 'login', {
+  const emp2cLogin = api(app, 'employeeLogin', {
     identifier: '+919822200201', password: emp2c.data.tempPassword,
     deviceFingerprint: 'fp-buildwell-ganesh-01', companyId: co2
   });
@@ -817,9 +872,9 @@ async function main() {
     ownerStats.data && JSON.stringify(ownerStats.data.companies));
   const suspend = api(app, 'setCompanyStatus', { companyId, status: 'Suspended', reason: 'Payment default (test)' }, { token: ownerToken });
   check('company suspension works', suspend.ok);
-  api(app, 'login', { identifier: superAdminId, password: 'Acme@2026x', companyId }, { expectError: 403 });
+  api(app, 'companyLogin', { identifier: superAdminId, password: 'Acme@2026x', companyId }, { expectError: 403 });
   api(app, 'setCompanyStatus', { companyId, status: 'Active' }, { token: ownerToken });
-  const revived = api(app, 'login', { identifier: superAdminId, password: 'Acme@2026x', companyId });
+  const revived = api(app, 'companyLogin', { identifier: superAdminId, password: 'Acme@2026x', companyId });
   check('company reinstated', revived.ok);
 
   // Projects screen: the status picker accepts only the three documented values
