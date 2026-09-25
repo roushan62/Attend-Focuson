@@ -115,20 +115,91 @@ function userMatchesIdentifier_(user, candidates) {
 }
 
 /* -------------------------------------------------------------------------- */
-/*  Password login (admins + employees)                                       */
+/*  Portal sign-in — the company console and the employee app are separate    */
 /* -------------------------------------------------------------------------- */
 
-function actionLogin(payload, ctx) {
+/**
+ * SiteTrack has exactly two sign-in doors and both check the SAME database
+ * (the company sheet created when the platform admin approved the signup):
+ *
+ *   portal = 'company'   →  ?page=company   SuperAdmin / Admin / SubAdmin only
+ *   portal = 'employee'  →  ?page=employee  Employee (site worker) only
+ *
+ * A credential from the wrong door is refused with a pointer to the right one,
+ * so an employee can never land in the admin console and vice-versa.
+ */
+var PORTALS = { COMPANY: 'company', EMPLOYEE: 'employee' };
+
+/** Which door a user record belongs to. */
+function portalOfUser_(user) {
+  return isStaffRole_(String(user && user.Role)) ? PORTALS.COMPANY : PORTALS.EMPLOYEE;
+}
+
+function assertPortal_(user, portal) {
+  if (!portal) return true;
+  var actual = portalOfUser_(user);
+  if (actual === portal) return true;
+
+  if (portal === PORTALS.COMPANY) {
+    throw new ApiError_('This is the company (HR/Admin) sign-in. This account is a site employee account — ' +
+      'please sign in from the Employee Login page.', 403);
+  }
+  throw new ApiError_('This is the employee sign-in. This account is a company (HR/Admin) account — ' +
+    'please sign in from the Company Login page.', 403);
+}
+
+/* ---- company portal ------------------------------------------------------ */
+
+/** ?page=company → password OR one-time code (payload.otp), HR/Admin only. */
+function actionCompanyLogin(payload, ctx) {
+  return portalSignIn_(payload, ctx, PORTALS.COMPANY);
+}
+
+function actionCompanySendOtp(payload, ctx) {
+  return sendPortalOtp_(payload, ctx, PORTALS.COMPANY);
+}
+
+/* ---- employee portal ----------------------------------------------------- */
+
+/** ?page=employee → one-time code OR password, site workers only. */
+function actionEmployeeLogin(payload, ctx) {
+  return portalSignIn_(payload, ctx, PORTALS.EMPLOYEE);
+}
+
+function actionEmployeeSendOtp(payload, ctx) {
+  return sendPortalOtp_(payload, ctx, PORTALS.EMPLOYEE);
+}
+
+/**
+ * One door, two credentials: an `otp` in the payload means the visitor used the
+ * one-time-code tab, anything else is treated as a password sign-in. Either way
+ * the same portal guard, the same company sheet and the same session run.
+ */
+function portalSignIn_(payload, ctx, portal) {
+  return isBlank_(payload.otp) ? passwordLogin_(payload, ctx, portal) : otpLogin_(payload, ctx, portal);
+}
+
+/* ---- shared implementation ---------------------------------------------- */
+
+/**
+ * Password sign-in used by both portals.
+ * `identifier` = User ID / e-mail / mobile. `companyId` is optional; when the
+ * caller supplies it (the company login page does) the tenant sheet is opened
+ * directly instead of walking the global login index.
+ */
+function passwordLogin_(payload, ctx, portal) {
   requireFields_(payload, ['identifier', 'password']);
   var resolved = resolveLogin_(payload.identifier, payload.companyId);
   var user = resolved.user;
   var ss = resolved.ss;
   var company = resolved.company;
 
+  assertPortal_(user, portal);
+
   if (!verifyPassword_(payload.password, user.PasswordHash)) {
     audit_(ss, { userId: String(user.UserID), role: String(user.Role), companyId: company.CompanyID,
       userAgent: ctx.meta.userAgent }, 'LOGIN_FAILED', 'Users', user.UserID,
-      { reason: 'bad password', identifier: maskString_(payload.identifier, 3) }, 'DENIED');
+      { reason: 'bad password', identifier: maskString_(payload.identifier, 3), portal: portal }, 'DENIED');
     throw new ApiError_('Incorrect password. Please try again.', 401);
   }
   if (String(user.Status) !== 'Active') {
@@ -143,10 +214,11 @@ function actionLogin(payload, ctx) {
   updateRecord_(ss, 'Users', 'UserID', user.UserID, { LastLoginAt: fmtDateTime_(new Date()) });
   audit_(ss, { userId: String(user.UserID), userName: user.Name, role: String(user.Role),
     companyId: company.CompanyID, userAgent: ctx.meta.userAgent }, 'LOGIN', 'Users', user.UserID,
-    { device: device.status, fingerprint: maskString_(ctx.meta.deviceFingerprint, 6) }, 'OK');
+    { device: device.status, fingerprint: maskString_(ctx.meta.deviceFingerprint, 6),
+      portal: portal, door: 'password' }, 'OK');
 
   var token = issueToken_({
-    userId: user.UserID, companyId: company.CompanyID, role: user.Role, name: user.Name
+    userId: user.UserID, companyId: company.CompanyID, role: user.Role, name: user.Name, portal: portalOfUser_(user)
   });
   return buildSessionPayload_(ss, user, company, token, device, ctx);
 }
@@ -156,16 +228,18 @@ function actionLogin(payload, ctx) {
  * remember). The code is delivered by SMS/WhatsApp when a gateway is
  * configured, otherwise by e-mail; in DEV_MODE it is echoed in the response.
  */
-function actionSendOtp(payload, ctx) {
+function sendPortalOtp_(payload, ctx, portal) {
   requireFields_(payload, ['identifier']);
   var resolved = resolveLogin_(payload.identifier, payload.companyId);
   var user = resolved.user;
+  assertPortal_(user, portal);
   if (String(user.Status) !== 'Active') throw new ApiError_('Account is not active', 403);
   var info = issueOtp_(resolved.ss, user, 'auto');
   audit_(resolved.ss, { userId: String(user.UserID), companyId: resolved.company.CompanyID },
-    'OTP_SENT', 'Users', user.UserID, { channel: info.channel }, 'OK');
+    'OTP_SENT', 'Users', user.UserID, { channel: info.channel, portal: portal }, 'OK');
   return {
     sent: true,
+    portal: portal,
     channel: info.channel,
     expiresAt: info.expiresAt,
     maskedIdentifier: maskString_(payload.identifier, 3),
@@ -173,16 +247,19 @@ function actionSendOtp(payload, ctx) {
   };
 }
 
-function actionLoginWithOtp(payload, ctx) {
+/** OTP sign-in used by both portals. */
+function otpLogin_(payload, ctx, portal) {
   requireFields_(payload, ['identifier', 'otp']);
   var resolved = resolveLogin_(payload.identifier, payload.companyId);
   var user = resolved.user;
   var ss = resolved.ss;
   var company = resolved.company;
 
+  assertPortal_(user, portal);
+
   if (!verifyOtpCode_(ss, user, payload.otp)) {
     audit_(ss, { userId: String(user.UserID), companyId: company.CompanyID }, 'OTP_LOGIN_FAILED',
-      'Users', user.UserID, { identifier: maskString_(payload.identifier, 3) }, 'DENIED');
+      'Users', user.UserID, { identifier: maskString_(payload.identifier, 3), portal: portal }, 'DENIED');
     throw new ApiError_('That OTP is incorrect or has expired. Request a new one.', 401);
   }
   if (String(user.Status) !== 'Active') throw new ApiError_('Account is not active', 403);
@@ -192,9 +269,12 @@ function actionLoginWithOtp(payload, ctx) {
   loginIndexUpsert_(user, company.CompanyID);
   updateRecord_(ss, 'Users', 'UserID', user.UserID, { LastLoginAt: fmtDateTime_(new Date()) });
   audit_(ss, { userId: String(user.UserID), userName: user.Name, role: String(user.Role),
-    companyId: company.CompanyID }, 'LOGIN_OTP', 'Users', user.UserID, { device: device.status }, 'OK');
+    companyId: company.CompanyID }, 'LOGIN_OTP', 'Users', user.UserID,
+    { device: device.status, portal: portal, door: 'otp' }, 'OK');
 
-  var token = issueToken_({ userId: user.UserID, companyId: company.CompanyID, role: user.Role, name: user.Name });
+  var token = issueToken_({
+    userId: user.UserID, companyId: company.CompanyID, role: user.Role, name: user.Name, portal: portalOfUser_(user)
+  });
   return buildSessionPayload_(ss, user, company, token, device, ctx);
 }
 
@@ -209,6 +289,7 @@ function buildSessionPayload_(ss, user, company, token, device, ctx) {
   return {
     token: token,
     expiresIn: TOKEN_TTL_SECONDS,
+    portal: portalOfUser_(user),
     mustChangePassword: bool_(user.MustChangePassword, false),
     user: {
       userId: user.UserID, name: user.Name, role: user.Role,

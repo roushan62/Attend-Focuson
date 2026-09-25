@@ -488,7 +488,7 @@ function actionExportReport(payload, ctx) {
     bytes: bytes.length,
     fileId: fileId,
     downloadUrl: link,
-    // Included so a GitHub-Pages frontend can trigger the download directly
+    // Included so the browser can trigger the download directly
     // without needing Drive access.
     dataUrl: bytes.length <= 6 * 1024 * 1024
       ? 'data:' + mime + ';base64,' + Utilities.base64Encode(bytes) : '',

@@ -19,11 +19,14 @@ var ACTIONS = {
   health: { fn: 'actionHealth', auth: 'none' },
   registerCompany: { fn: 'actionRegisterCompany', auth: 'none', rate: 'register' },
   signupStatus: { fn: 'actionSignupStatus', auth: 'none', rate: 'lookup' },
-  sendOtp: { fn: 'actionSendOtp', auth: 'none', rate: 'otp' },
   sendSignupOtp: { fn: 'actionSendSignupOtp', auth: 'none', rate: 'otp' },
   verifyOtp: { fn: 'actionVerifyOtp', auth: 'none', rate: 'lookup' },
-  login: { fn: 'actionLogin', auth: 'none', rate: 'login' },
-  loginWithOtp: { fn: 'actionLoginWithOtp', auth: 'none', rate: 'login' },
+  // Company portal (HR / Admin / Super Admin console) — ?page=company
+  companyLogin: { fn: 'actionCompanyLogin', auth: 'none', rate: 'login' },
+  companySendOtp: { fn: 'actionCompanySendOtp', auth: 'none', rate: 'otp' },
+  // Employee portal (worker app) — ?page=employee
+  employeeLogin: { fn: 'actionEmployeeLogin', auth: 'none', rate: 'login' },
+  employeeSendOtp: { fn: 'actionEmployeeSendOtp', auth: 'none', rate: 'otp' },
   ownerLogin: { fn: 'actionOwnerLogin', auth: 'none', rate: 'login' },
   bootstrapPlatform: { fn: 'actionBootstrapPlatform', auth: 'none' },
 
@@ -151,7 +154,8 @@ function doGet(e) {
   var params = {};
   if (e && e.parameter) for (var k in e.parameter) params[k] = e.parameter[k];
 
-  // ?page=… → serve the full frontend (index, login, signup, app, mobile, owner, status)
+  // ?page=… → serve the web app itself: index, login chooser, company, employee,
+  //            signup, status, app, mobile, owner/admin (all rendered by 22_Frontend.gs)
   if (params.page !== undefined || (!params.action && typeof servePage_ === 'function')) {
     return servePage_(params.page || '');
   }
@@ -196,9 +200,8 @@ function doPost(e) {
 
 /**
  * CORS pre-flight (§12.9). Apps Script web apps are fronted by Google, which
- * answers most pre-flights itself; this handler exists for completeness and for
- * self-hosted/proxied deployments. The frontend deliberately POSTs with
- * `Content-Type: text/plain` so no pre-flight is required in the common case.
+ * answers most pre-flights itself; this handler exists for completeness. The
+ * pages POST with `Content-Type: text/plain` so no pre-flight is required.
  */
 function doOptions(e) {
   return jsonResponse_({

@@ -1,5 +1,5 @@
 {
-  "//": "Copy to .clasp.json after `clasp create` (or paste your existing scriptId). Never commit .clasp.json.",
+  "//": "Copy to .clasp.json after `clasp create` (or paste your existing scriptId). Never commit .clasp.json. `clasp push` uploads backend/ — every .gs file plus every .html page and inlined asset — into your one Apps Script project.",
   "scriptId": "PASTE_YOUR_APPS_SCRIPT_PROJECT_ID_HERE",
   "rootDir": "backend",
   "projectId": "",

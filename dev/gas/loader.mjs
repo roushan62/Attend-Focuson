@@ -39,9 +39,13 @@ export function checkSyntax(backendDir = BACKEND_DIR) {
   return errors;
 }
 
-export function loadBackend({ dataDir = path.join(REPO_ROOT, 'dev', 'data'), verbose = false, backendDir = BACKEND_DIR } = {}) {
-  const sandbox = createPolyfill({ dataDir, verbose });
+export function loadBackend({ dataDir = path.join(REPO_ROOT, 'dev', 'data'), verbose = false, backendDir = BACKEND_DIR, serviceUrl = '' } = {}) {
+  // HtmlService templates are evaluated inside this same context, so the
+  // polyfill needs a handle on it (filled in as soon as the context exists).
+  const contextRef = { context: null };
+  const sandbox = createPolyfill({ dataDir, verbose, templateDir: backendDir, serviceUrl, contextRef });
   const context = vm.createContext(sandbox);
+  contextRef.context = context;
 
   const sources = backendSources(backendDir);
   for (const src of sources) {
@@ -92,11 +96,20 @@ export function loadBackend({ dataDir = path.join(REPO_ROOT, 'dev', 'data'), ver
     try { return JSON.parse(text); } catch { return { success: false, error: { message: 'non-JSON response', raw: text.slice(0, 500) } }; }
   }
 
+  /** Render any page in backend/tmpl_*.html the way the Web App would. */
+  function page(pageName, params = {}) {
+    clearCaches();
+    const parameter = { page: pageName === undefined || pageName === null ? '' : String(pageName), ...params };
+    const out = context.doGet({ parameter, userAgent: 'dev-browser', headers: {} });
+    return typeof out.getContent === 'function' ? out.getContent() : String(out);
+  }
+
   return {
     context,
     sandbox,
     call,
     invoke,
+    page,
     clearCaches,
     sources: sources.map((s) => s.file),
     dev: sandbox.__dev,

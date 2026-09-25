@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in — SiteTrack</title>
+<meta name="theme-color" content="#0b1220">
+<?!= includeCss_('app_css') ?>
+</head>
+<body>
+
+<main class="auth-shell">
+  <div class="auth-card" style="max-width:560px">
+    <div class="auth-head">
+      <div class="logo"><?!= logoSvgLarge_() ?></div>
+      <h1 data-i18n="choosePortal">Choose your sign-in</h1>
+      <p class="sub">Company staff and site employees sign in from two different doors — both are checked against your company's Google Sheet.</p>
+    </div>
+
+    <div class="portal-grid mt">
+      <a class="portal-card-choice" href="?page=company">
+        <span class="ico">🏢</span>
+        <b data-i18n="companyLogin">Company login</b>
+        <span class="tiny muted" data-i18n="companyLoginSub">Super Admin, Admin and Sub-Admin (HR) accounts.</span>
+        <span class="btn primary sm mt">Continue →</span>
+      </a>
+      <a class="portal-card-choice" href="?page=employee">
+        <span class="ico">🧑‍🔧</span>
+        <b data-i18n="employeeLogin">Employee login</b>
+        <span class="tiny muted" data-i18n="employeeLoginSub">Site workers: mobile number + one-time code.</span>
+        <span class="btn sm mt">Continue →</span>
+      </a>
+    </div>
+
+    <p class="tiny muted mt" style="text-align:center">
+      <a href="?page=signup" data-i18n="companySignup">Register your company</a> ·
+      <a href="?page=status" data-i18n="checkStatus">Check your application status</a> ·
+      <a href="?page=index" data-i18n="backHome">Back to home</a>
+    </p>
+  </div>
+</main>
+
+<div id="toasts"></div>
+<?!= includeJs_('tmpl_config_js') ?>
+<?!= includeJs_('i18n_js') ?>
+<?!= includeJs_('api_js') ?>
+<?!= includeJs_('ui_js') ?>
+<script>ST.ui.applyTheme(); ST.i18n.apply(document.body);</script>
+</body>
+</html>
