@@ -1,19 +1,5 @@
-# --- local dev harness state (the Apps Script polyfill writes JSON here) -----
-dev/data/
-dev/data-test/
-
-# --- node / editors ----------------------------------------------------------
-node_modules/
-npm-debug.log*
 .DS_Store
-.vscode/
-.idea/
-*.local.json
-
-# --- clasp (contains script IDs / auth) --------------------------------------
+node_modules/
 .clasp.json
 .clasprc.json
-
-# --- OS / misc ---------------------------------------------------------------
-Thumbs.db
 *.swp
