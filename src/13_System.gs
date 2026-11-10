@@ -191,6 +191,7 @@ function setupSystem_(payload) {
 // ---------- Seed demo data ----------
 
 function seedDemoData_(payload) {
+  payload = payload || {};
   var boot = _boot(payload.token);
   if (!boot.loggedIn || !_isSuperAdmin(boot.user.userId)) throw _error(ERR.FORBIDDEN, 'Super Admin only.');
   // create a few branches, depts, employees
@@ -225,6 +226,7 @@ function seedDemoData_(payload) {
 // ---------- Seed 200 users for load test ----------
 
 function seedLoadTest200_(payload) {
+  payload = payload || {};
   var boot = _boot(payload.token);
   if (!boot.loggedIn || !_isSuperAdmin(boot.user.userId)) throw _error(ERR.FORBIDDEN, 'Super Admin only.');
   var db = _openCoreDb();
