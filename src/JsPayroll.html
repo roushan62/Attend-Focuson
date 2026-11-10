@@ -1,0 +1,122 @@
+<script>
+/* =====================================================================
+   FocusOn HRMS 2.0 — Payroll Views (JsPayroll.html)
+   ===================================================================== */
+
+async function payroll_dashboard(id){
+  const host = $('#view');
+  const panel = S.panel;
+  host.innerHTML = '<div class="view">' + pageHead('Payroll', 'Monthly salary run and statutory.') +
+    '<div class="grid g4" id="payStats">' + skelStats(4) + '</div>' +
+    '<div id="payBody"></div></div>';
+  try {
+    const runs = await callApi('pay.runs', {});
+    const runList = runs.data.rows || [];
+    const last = runList[0] || {};
+    const stats = $('#payStats'); stats.innerHTML = '';
+    const cards = [
+      { icon: 'wallet', label: 'Last Run', value: last.yearMonth || '—', color: 'blue' },
+      { icon: 'clock', label: 'Status', value: (last.status || '—').charAt(0).toUpperCase() + (last.status || '').slice(1), color: last.status === 'Released' ? 'green' : 'amber' },
+      { icon: 'file', label: 'Payslips', value: last.count || '—', color: 'green' },
+      { icon: 'shield', label: 'Statutory', value: 'PF · ESI · PT', color: 'blue' }
+    ];
+    cards.forEach((c) => { stats.insertAdjacentHTML('beforeend', statCard(c)); });
+    // run list
+    const body = document.createElement('div');
+    body.className = 'card mt';
+    body.innerHTML = '<div class="card-head"><h3>Payroll Runs</h3></div><div class="mt" style="padding:16px">' +
+      (runList.length ? '<table class="tbl"><thead><tr><th>Year-Month</th><th>Status</th><th>Prepared</th><th>Verified</th><th>Approved</th><th>Released</th><th>Actions</th></tr></thead><tbody>' +
+      runList.map((r) => '<tr><td>' + esc(r.yearMonth) + '</td><td>' + badge(r.status) + '</td><td>' + (r.preparedBy ? esc(r.preparedBy) : '—') + '</td><td>' + (r.verifiedBy ? esc(r.verifiedBy) : '—') + '</td><td>' + (r.approvedBy ? esc(r.approvedBy) : '—') + '</td><td>' + (r.releasedBy ? esc(r.releasedBy) : '—') + '</td><td>' +
+        runActions(r) + '</td></tr>').join('') + '</tbody></table>' : emptyHtml('No runs', 'No payroll runs yet.', 'inbox')) + '</div></div>';
+    host.querySelector('#payBody').insertAdjacentElement('beforeend', body);
+  } catch (e) { errorBox(host, e); }
+}
+function runActions(r){
+  const b = [];
+  if (r.status === 'Draft') b.push('<button class="btn sm" onclick="payStage(\'' + r.runId + '\', \'verify\')">Verify</button>');
+  if (r.status === 'Verified') b.push('<button class="btn sm" onclick="payStage(\'' + r.runId + '\', \'approve\')">Approve</button>');
+  if (r.status === 'Approved' || r.status === 'Verified') b.push('<button class="btn sm success" onclick="payStage(\'' + r.runId + '\', \'release\')">Release</button>');
+  if (r.status === 'Released') b.push('<button class="btn sm" onclick="payBankfile(\'' + r.runId + '\')">Bank File</button>');
+  return b.join(' ') || '—';
+}
+
+// ---------- New run / precheck ----------
+
+async function payroll_new(id){
+  const host = $('#view');
+  host.innerHTML = '<div class="view">' + pageHead('New Payroll Run', 'Calculate monthly payroll (HR prepares).') +
+    '<div id="payNew" class="card mt"></div></div>';
+  const box = $('#payNew'); box.innerHTML = '<div class="card-head"><h3>Pre-check &amp; Calculate</h3></div><div class="mt" style="padding:16px">' +
+    '<div class="row spread" style="gap:8px"><input type="text" id="pyYM" placeholder="YYYY-MM" value="' + todayStr().slice(0,7) + '" style="width:150px">' +
+    '<select id="pyDiv" style="height:40px"><option>CALENDAR</option><option>FIXED_30</option><option>FIXED_26</option><option>WORKING_DAYS</option></select>' +
+    '<button class="btn" id="pyPrecheck">' + icon('search', 16) + ' Pre-check</button>' +
+    '<button class="btn success" id="pyCalc" disabled>' + icon('calculator', 16) + ' Calculate (Draft)</button>' +
+    '</div><div id="pyResult" class="mt"></div></div>';
+  $('#pyPrecheck').onclick = async () => {
+    const ym = $('#pyYM').value; const res = await callApi('pay.precheck', { token: S.token, yearMonth: ym });
+    const rbox = $('#pyResult');
+    rbox.innerHTML = '<div class="card flat"><div class="mt" style="padding:16px">' +
+      '<p><b>Employees:</b> ' + res.data.employeeCount + '</p>' +
+      (res.data.blockers.length ? '<p style="color:var(--danger)"><b>Blockers:</b><ul>' + res.data.blockers.map((b) => '<li>' + esc(b) + '</li>').join('') + '</ul></p>' : '<p style="color:var(--success)">No blockers.</p>') +
+      (res.data.warnings.length ? '<p><b>Warnings:</b>' + res.data.warnings.map((w) => ' • ' + esc(w)).join('') + '</p>' : '') +
+      '</div></div>';
+    $('#pyCalc').disabled = !res.data.ready;
+    $('#pyCalc').onclick = async () => {
+      try { const r2 = await callApi('pay.calculate', { token: S.token, yearMonth: ym, divisor: $('#pyDiv').value }); toast(r2.message, 'success'); payroll_dashboard(); }
+      catch (e) { toast(e.message, 'error'); }
+    };
+  };
+}
+
+// ---------- Stage actions ----------
+
+async function payStage(runId, stage){
+  const label = { verify: 'verify', approve: 'approve', release: 'release', hold: 'hold', unhold: 'unhold' }[stage];
+  if (stage === 'release' && !confirm('Release payroll? Payslips will be generated for employees.')) return;
+  try { const res = await callApi('pay.stage', { token: S.token, runId: runId, stage: stage }); toast('Payroll ' + label + 'd.', 'success'); payroll_dashboard(); }
+  catch (e) { toast(e.message, 'error'); }
+}
+
+// ---------- Bank file / statutory ----------
+
+async function payBankfile(runId){
+  const ym = prompt('Year-Month (YYYY-MM) for bank file:', todayStr().slice(0,7));
+  if (!ym) return;
+  try { const res = await callApi('pay.bankfile', { token: S.token, runId: runId, yearMonth: ym }); downloadB64(res.data.fileName, 'text/csv', res.data.csv); toast('Bank file downloaded.', 'success'); }
+  catch (e) { toast(e.message, 'error'); }
+}
+function payPF(runId){
+  const ym = prompt('Year-Month (YYYY-MM):', todayStr().slice(0,7));
+  if (!ym) return;
+  callApi('pay.pfecr', { token: S.token, runId: runId, yearMonth: ym }).then((res) => { downloadB64(res.data.fileName, 'text/plain', res.data.text); toast('PF ECR downloaded.', 'success'); }).catch((e) => toast(e.message, 'error'));
+}
+function payESI(runId){
+  const ym = prompt('Year-Month (YYYY-MM):', todayStr().slice(0,7));
+  if (!ym) return;
+  callApi('pay.esi', { token: S.token, runId: runId, yearMonth: ym }).then((res) => { downloadB64(res.data.fileName, 'text/csv', res.data.csv); toast('ESI statement downloaded.', 'success'); }).catch((e) => toast(e.message, 'error'));
+}
+
+// ---------- Payslip view (HR/Accounts/Exec) ----------
+
+async function payroll_payslip(id){
+  const host = $('#view');
+  host.innerHTML = '<div class="view">' + pageHead('Payslips', 'Employee payslips.') +
+    '<div id="paySlipArea" class="mt"></div></div>';
+  const area = $('#paySlipArea'); area.innerHTML = '<div style="padding:24px">' + spinner() + ' Loading…</div>';
+  try {
+    const runs = await callApi('pay.runs', {});
+    const lastRun = (runs.data.rows || [])[0];
+    if (!lastRun) { area.innerHTML = emptyHtml('No payroll run', 'Run a payroll first.', 'inbox'); return; }
+    const items = await callApi('pay.items', { token: S.token, runId: lastRun.runId });
+    area.innerHTML = '<div class="card"><div class="card-head"><h3>Payslips — ' + fmtMonth(lastRun.yearMonth) + '</h3></div><div class="mt" style="padding:16px">' +
+      '<table class="tbl"><thead><tr><th>Employee</th><th>Gross</th><th>PF</th><th>ESI</th><th>PT</th><th>TDS</th><th>Net Pay</th><th>Status</th><th>Payslip</th></tr></thead><tbody>' +
+      (items.data.rows || []).map((it) => '<tr><td>' + esc(it.empId) + '</td><td class="num">' + fmtInr(it.gross) + '</td><td class="num">' + fmtInr(it.pfEmp) + '</td><td class="num">' + fmtInr(it.esiEmp) + '</td><td class="num">' + fmtInr(it.pt) + '</td><td class="num">' + fmtInr(it.tds) + '</td><td class="num"><b>' + fmtInr(it.netPay) + '</b></td><td>' + badge(it.status) + '</td><td><button class="btn sm" onclick="openFile(\'' + (it.pdfFileId || '') + '\', \'Payslip ' + esc(it.empId) + '\')">' + icon('file', 14) + '</button></td></tr>').join('') + '</tbody></table>' +
+      '</div></div>';
+  } catch (e) { errorBox(area, e); }
+}
+
+// expose for HR reports reuse
+window.payroll_dashboard = payroll_dashboard;
+window.payroll_new = payroll_new;
+window.payroll_payslip = payroll_payslip;
+</script>

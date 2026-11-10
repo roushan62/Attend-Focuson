@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>FocusOn HRMS 2.0</title>
+<?!= include('Styles'); ?>
+</head>
+<body>
+<div id="app"></div>
+<!-- google.script.run is auto-injected by Apps Script -->
+<?!= include('JsCore'); ?>
+<?!= include('JsSelf'); ?>
+<?!= include('JsHr'); ?>
+<?!= include('JsPayroll'); ?>
+<?!= include('JsAdmin'); ?>
+<script>
+  // boot the app once the HTML shell is ready
+  if (typeof INIT === 'function') INIT();
+</script>
+</body>
+</html>

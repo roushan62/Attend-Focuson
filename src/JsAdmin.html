@@ -1,0 +1,206 @@
+<script>
+/* =====================================================================
+   FocusOn HRMS 2.0 — Admin / Super Admin Console (JsAdmin.html)
+   ===================================================================== */
+
+async function admin_dashboard(id){
+  const host = $('#view');
+  host.innerHTML = '<div class="view">' + pageHead('System Console', 'Super Admin — users, roles, settings, backup, audit.') +
+    '<div class="grid g4" id="saStats">' + skelStats(4) + '</div>' +
+    '<div class="grid g-main" id="saBody"></div></div>';
+  try {
+    const health = await callApi('system.health', {});
+    const stats = $('#saStats'); stats.innerHTML = '';
+    const cards = [
+      { icon: 'users', label: 'Super Admins', value: health.data.superAdmins || 0, color: 'blue' },
+      { icon: 'shield', label: 'ACL Version', value: health.data.aclVersion || '0', color: 'green' },
+      { icon: 'save', label: 'DB Core', value: health.data.dbCore === 'yes' ? 'Initialized' : 'Not initialized', color: health.data.dbCore === 'yes' ? 'green' : 'red' },
+      { icon: 'mail', label: 'Email Used', value: health.data.emailUsed, color: 'amber' }
+    ];
+    cards.forEach((c) => { stats.insertAdjacentHTML('beforeend', statCard(c)); });
+    const body = $('#saBody');
+    body.innerHTML = '<div class="card"><div class="card-head"><h3>Quick Actions</h3></div><div class="mt" style="padding:16px;display:flex;gap:10px;flex-wrap:wrap">' +
+      '<button class="btn" onclick="go(\'admin/setup\')">' + icon('play', 16) + ' Initialize System</button>' +
+      '<button class="btn" onclick="go(\'admin/backup\')">' + icon('save', 16) + ' Backup Now</button>' +
+      '<button class="btn" onclick="go(\"admin/roles\')">' + icon('sliders', 16) + ' Role Builder</button>' +
+      '<button class="btn" onclick="go(\"admin/users\')">' + icon('users', 16) + ' User Access</button>' +
+      '<button class="btn" onclick="go(\'admin/audit\')">' + icon('shield', 16) + ' Audit Log</button>' +
+      '<button class="btn" onclick="go(\'admin/system\')">' + icon('sliders', 16) + ' Settings</button>' +
+      '</div></div>';
+  } catch (e) { errorBox(host, e); }
+}
+
+// ---------- Setup ----------
+
+async function admin_setup(id){
+  const host = $('#view');
+  host.innerHTML = '<div class="view">' + pageHead('Initialize System', 'Create the Core DB, default roles, policies, and the first Super Admin.') +
+    '<div class="card mt"><div class="card-head"><h3>Setup</h3></div><div class="mt" style="padding:24px">' +
+    '<p class="muted">Run once. Creates the Google Sheets database and default data.</p>' +
+    '<button class="btn success" id="btnSetup">' + icon('play', 18) + ' Run setupSystem</button>' +
+    '<button class="btn" id="btnSeed" style="margin-left:8px">' + icon('users', 18) + ' Seed Demo Data</button>' +
+    '<div id="setupResult" class="mt" style="padding:16px"></div>' +
+    '</div></div></div>';
+  $('#btnSetup').onclick = async () => {
+    try { const res = await callApi('setupSystem', {}); $('#setupResult').innerHTML = '<div class="alert ok mt">' + icon('checkcircle', 18) + '<div><b>Initialized.</b> ' + esc(res.message) + '<br><b>Super Admin:</b> FO-0001 / FocusOn@2026<br><b>Admin:</b> FO-0002 / Admin@2026</div></div>'; }
+    catch (e) { $('#setupResult').innerHTML = '<div class="alert danger mt">' + icon('alert', 18) + '<div>' + esc(e.message) + '</div></div>'; }
+  };
+  $('#btnSeed').onclick = async () => {
+    try { const res = await callApi('seedDemoData', {}); $('#setupResult').innerHTML += '<div class="alert ok mt">' + icon('checkcircle', 18) + '<div>Demo data seeded: ' + esc(res.message) + '</div></div>'; }
+    catch (e) { toast(e.message, 'error'); }
+  };
+}
+
+// ---------- Users & Access ----------
+
+async function admin_users(id){
+  const host = $('#view');
+  host.innerHTML = '<div class="view">' + pageHead('User Access', 'Users, roles, overrides, delegation.') +
+    '<div class="grid g2"><div id="uaUsers" class="card"></div><div id="uaRoles" class="card"></div></div></div>';
+  try {
+    const users = await callApi('org.employee.list', {});
+    $('#uaUsers').innerHTML = '<div class="card-head"><h3>Users (' + (users.data.rows || []).length + ')</h3></div><div class="mt" style="padding:16px">' +
+      '<table class="tbl"><thead><tr><th>Code</th><th>Name</th><th>Role</th><th>Panel</th><th>Status</th><th>Action</th></tr></thead><tbody>' +
+      (users.data.rows || []).map((u) => '<tr><td>' + esc(u.empCode) + '</td><td>' + esc(u.name) + '</td><td>' + esc(u.roleId || 'EMPLOYEE') + '</td><td>' + esc(u.panel || 'employee') + '</td><td>' + badge(u.status) + '</td><td><button class="btn sm" onclick="go(\'admin/user/' + u.empId + '\')">' + icon('eye', 14) + '</button></td></tr>').join('') + '</tbody></table>' +
+      '</div>';
+    $('#uaRoles').innerHTML = '<div class="card-head"><h3>Preset Roles</h3></div><div class="mt" style="padding:16px">' +
+      ['Super Admin','Admin','HR Manager','Accounts','Executive','Manager','Supervisor','Employee'].map((r) => '<div class="row spread mb"><span>' + esc(r) + '</span><button class="btn sm" onclick="go(\'admin/role/' + r + '\')">Edit</button></div>').join('') +
+      '</div>';
+  } catch (e) { errorBox(host, e); }
+}
+
+// ---------- Roles & Permissions ----------
+
+async function admin_roles(id){
+  const host = $('#view');
+  host.innerHTML = '<div class="view">' + pageHead('Role Builder', 'Define roles and their permissions (scope + limits).') +
+    '<div id="roleArea" class="mt"></div></div>';
+  const area = $('#roleArea'); area.innerHTML = '<div style="padding:24px">' + spinner() + ' Loading…</div>';
+  try {
+    const roles = await callApi('org.employee.list', {}); // placeholder — real: role list
+    area.innerHTML = '<div class="card"><div class="card-head"><h3>Roles</h3></div><div class="mt" style="padding:16px">' +
+      '<p class="muted">Role matrix: each permission has a scope (Self/Team/Dept/Branch/Company) and an optional limit (amount/days). DENY always wins.</p>' +
+      '<button class="btn" onclick="go(\'admin/users\')">Manage Users</button>' +
+      '<button class="btn" onclick="admin_bumpacl()">' + icon('refresh', 16) + ' Bump ACL Version (clear cache)</button>' +
+      '</div></div>';
+  } catch (e) { errorBox(area, e); }
+}
+function admin_bumpacl(){
+  callApi('access.bumpversion', { token: S.token }).then((res) => { toast('ACL version bumped to ' + res.version + '. Caches cleared.', 'success'); }).catch((e) => toast(e.message, 'error'));
+}
+
+// ---------- System settings ----------
+
+async function admin_system(id){
+  const host = $('#view');
+  host.innerHTML = '<div class="view">' + pageHead('Settings', 'Company, payroll, security, notifications.') +
+    '<div id="setArea" class="mt"></div></div>';
+  const area = $('#setArea'); area.innerHTML = '<div style="padding:24px">' + spinner() + ' Loading…</div>';
+  try {
+    const res = await callApi('system.settings', { token: S.token });
+    const kv = res.data.settings || {};
+    area.innerHTML = '<div class="card"><div class="card-head"><h3>Settings</h3></div><div class="mt" style="padding:16px">' +
+      '<table class="tbl"><thead><tr><th>Key</th><th>Value</th><th>Action</th></tr></thead><tbody>' +
+      Object.entries(kv).map(([k, v]) => '<tr><td>' + esc(k) + '</td><td class="num ellipsis" style="max-width:260px">' + esc(v) + '</td><td><button class="btn sm" onclick="editSetting(\'' + esc(k) + '\', \'' + esc(String(v)) + '\')">Edit</button></td></tr>').join('') +
+      '</tbody></table>' +
+      '<div class="mt"><button class="btn" onclick="newSetting()">' + icon('plus', 16) + ' Add Setting</button></div>' +
+      '</div></div>';
+  } catch (e) { errorBox(area, e); }
+}
+function editSetting(key, val){
+  const nv = prompt('New value for ' + key + ':', val);
+  if (nv === null) return;
+  callApi('system.settings', { token: S.token, action: 'set', key: key, value: nv }).then(() => { toast('Setting saved.', 'success'); admin_system(); }).catch((e) => toast(e.message, 'error'));
+}
+function newSetting(){
+  const k = prompt('Setting key:'); if (!k) return;
+  const v = prompt('Value for ' + k + ':'); if (v === null) return;
+  callApi('system.settings', { token: S.token, action: 'set', key: k, value: v }).then(() => { toast('Setting saved.', 'success'); admin_system(); }).catch((e) => toast(e.message, 'error'));
+}
+
+// ---------- Backup / Restore ----------
+
+async function admin_backup(id){
+  const host = $('#view');
+  host.innerHTML = '<div class="view">' + pageHead('Backup & Restore', 'Core DB backups stored on Drive.') +
+    '<div class="grid g2"><div id="bakRun" class="card"></div><div id="bakList" class="card"></div></div></div>';
+  try {
+    const list = await callApi('system.backups', {});
+    $('#bakRun').innerHTML = '<div class="card-head"><h3>Run Backup</h3></div><div class="mt" style="padding:16px"><p class="muted">Creates a copy of the Core DB on Drive (keeps 30 daily + 12 monthly).</p><button class="btn success" id="btnBakNow">' + icon('save', 18) + ' Backup Now</button></div></div>';
+    $('#btnBakNow').onclick = async () => {
+      try { const res = await callApi('system.backup', {}); toast('Backup created.', 'success'); admin_backup(); }
+      catch (e) { toast(e.message, 'error'); }
+    };
+    $('#bakList').innerHTML = '<div class="card-head"><h3>Backups</h3></div><div class="mt" style="padding:16px">' +
+      (list.data.files || []).map((f) => '<div class="row spread mb"><div>' + esc(f.name) + '</div><div>' +
+        '<button class="btn sm" onclick="adminRestore(\'' + f.fileId + '\')">Restore</button></div></div>').join('') || emptyHtml('No backups', 'Run a backup first.', 'inbox') +
+      '</div>';
+  } catch (e) { errorBox(host, e); }
+}
+async function adminRestore(fileId){
+  const ok = await confirmDlg({ title: 'Restore Database', text: 'This will replace the current Core DB with the selected backup. A safety backup is made first. Continue?' });
+  if (!ok) return;
+  try { const res = await callApi('system.restore', { token: S.token, fileId: fileId }); toast('Database restored. Please refresh the page.', 'success'); }
+  catch (e) { toast(e.message, 'error'); }
+}
+
+// ---------- Audit ----------
+
+async function admin_audit(id){
+  const host = $('#view');
+  host.innerHTML = '<div class="view">' + pageHead('Audit Log', 'Who changed what and when.') +
+    '<div id="audArea" class="mt"></div></div>';
+  mountList($('#audArea'), { id: 'audit', action: 'report.run', title: 'Audit Trail', columns: [
+    { label: 'Time', key: 'at' }, { label: 'User', key: 'userId' }, { label: 'Action', key: 'action' }, { label: 'Table', key: 'table' }, { label: 'Record', key: 'recordId' }
+  ], params: () => ({ token: S.token, kind: 'audit_trail' }), pick: (r) => r.data });
+}
+
+// ---------- Health ----------
+
+async function admin_health(id){
+  const host = $('#view');
+  host.innerHTML = '<div class="view">' + pageHead('System Health', 'Triggers, quota, and status.') +
+    '<div id="hlArea" class="mt"></div></div>';
+  const area = $('#hlArea'); area.innerHTML = '<div style="padding:24px">' + spinner() + ' Loading…</div>';
+  try {
+    const res = await callApi('system.health', {});
+    const h = res.data || {};
+    area.innerHTML = '<div class="card"><div class="card-head"><h3>Health</h3></div><div class="mt" style="padding:16px">' +
+      '<table class="tbl"><tbody>' +
+      '<tr><td>Version</td><td>' + esc(h.version) + '</td></tr>' +
+      '<tr><td>Setup done</td><td>' + (h.setupDone ? 'Yes' : 'No') + '</td></tr>' +
+      '<tr><td>Database</td><td>' + (h.dbCore === 'yes' ? 'Initialized' : 'Not initialized') + '</td></tr>' +
+      '<tr><td>Email used today</td><td>' + esc(h.emailUsed) + ' (guard: ' + h.quotaGuard + ')</td></tr>' +
+      '<tr><td>Super Admins</td><td>' + h.superAdmins + ' (max 2)</td></tr>' +
+      '<tr><td>ACL version</td><td>' + esc(h.aclVersion) + '</td></tr>' +
+      '</tbody></table>' +
+      '<div class="mt"><b>Triggers:</b><ul>' + (h.triggers || []).map((t) => '<li>' + esc(t) + '</li>').join('') + '</ul></div>' +
+      '<div class="mt"><button class="btn" onclick="admin_installTriggers()">Install / Refresh Cron Triggers</button></div>' +
+      '</div></div>';
+  } catch (e) { errorBox(area, e); }
+}
+function admin_installTriggers(){
+  // installTriggers is a server function exposed via api? It's not in the action map directly; call via setup endpoint? We expose a generic.
+  toast('Install triggers from the Apps Script editor (installTriggers).', 'info');
+}
+
+// user detail (stub)
+async function admin_user(id){
+  const host = $('#view'); host.innerHTML = '<div class="view">' + pageHead('User — ' + esc(id), 'Effective permissions and overrides.') +
+    '<div id="udArea" class="mt"></div></div>';
+  const area = $('#udArea'); area.innerHTML = '<div style="padding:24px">' + spinner() + ' Loading…</div>';
+  try {
+    const res = await callApi('access.effectivepermissions', { token: S.token, targetUserId: id });
+    area.innerHTML = '<div class="card"><div class="card-head"><h3>Effective Permissions</h3></div><div class="mt" style="padding:16px">' +
+      '<p class="muted">ACL version: ' + esc(res.data.ver) + '</p>' +
+      '<pre style="background:var(--card-2);padding:12px;border-radius:8px;font-size:12px;overflow:auto">' + esc(JSON.stringify(res.data.perms, null, 2)).slice(0, 3000) + '</pre>' +
+      '</div></div>';
+  } catch (e) { errorBox(area, e); }
+}
+
+// role detail (stub)
+async function admin_role(id){
+  const host = $('#view'); host.innerHTML = '<div class="view">' + pageHead('Role — ' + esc(id), 'Permission matrix.') +
+    '<div class="card mt"><div class="mt" style="padding:24px">' + emptyHtml('Role Builder', 'Use the Access Console to define roles and permissions.', 'sliders') + '</div></div></div>';
+}
+</script>

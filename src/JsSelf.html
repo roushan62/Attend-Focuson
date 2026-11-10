@@ -1,0 +1,218 @@
+<script>
+/* =====================================================================
+   FocusOn HRMS 2.0 — Employee Self (JsSelf.html)
+   ===================================================================== */
+
+async function self_dashboard(id){
+  const host = $('#view'); host.innerHTML = '<div class="view"><div class="grid g4" style="margin-bottom:20px">' + skelStats(4) + '</div><div class="grid g-main"><div></div><div class="card"></div></div></div>';
+  try {
+    const boot = S.boot;
+    const empId = boot.user.userId;
+    // employee profile
+    const emp = await callApi('org.employee.get', { empId: empId });
+    const today = todayStr();
+    const att = await callApi('att.liveboard', { date: today });
+    const bal = await callApi('lv.balances', { empId: empId });
+    const notif = await callApi('notif.list', {}, { silent: true });
+    const row = host.querySelector('.grid.g-main'); row.innerHTML = '';
+    // stats
+    const statRow = host.querySelector('.grid.g4');
+    statRow.innerHTML = '';
+    const attToday = (att.data.rows || []).find((r) => r.empId === empId);
+    const cards = [
+      { icon: 'calendar', label: 'Aaj ki Hazri', value: attToday ? (attToday.code === 'P' ? 'Present' : attToday.code === 'A' ? 'Absent' : attToday.code || '—') : 'Not marked', color: attToday && attToday.code === 'P' ? 'green' : (attToday && attToday.code === 'A' ? 'red' : 'amber'), click: 'self/attendance' },
+      { icon: 'wallet', label: 'Current Balance', value: bal.data.rows.length ? bal.data.rows.map((r) => r.typeId).join(', ') : '—', color: 'blue' },
+      { icon: 'leaf', label: 'Leave Balance', value: bal.data.rows.length ? bal.data.rows.reduce((a, r) => a + Number(r.available || 0), 0).toFixed(1) + ' days' : '0', color: 'green' },
+      { icon: 'bell', label: 'Notifications', value: notif.data.unread || 0, color: 'blue', click: 'self/helpdesk' }
+    ];
+    cards.forEach((c) => { statRow.insertAdjacentHTML('beforeend', statCard(c)); });
+    $$('.stat.click', statRow).forEach((el) => { el.onclick = () => go(el.dataset.go); });
+    // left: quick actions (simple mode tiles)
+    const left = html('<div class="card"><div class="card-head"><h3>Quick Actions</h3></div><div class="simple-wrap"></div></div>');
+    const wrap = $('.simple-wrap', left);
+    const tiles = [
+      { icon: 'login', label: 'Check In', t: 'Punch In', s: 'Mark attendance', click: () => doPunch('in', null) },
+      { icon: 'logout', label: 'Check Out', t: 'Punch Out', s: 'Mark attendance', click: () => doPunch('out', null) },
+      { icon: 'leaf', label: 'Apply Leave', t: 'Chhutti', s: 'Apply for leave', click: () => openLeaveModal() },
+      { icon: 'wallet', label: 'Payslip', t: 'Salary Slip', s: 'Download payslip', click: () => go('self/payslip') }
+    ];
+    tiles.forEach((t) => { wrap.insertAdjacentHTML('beforeend', '<div class="simple-tile" style="cursor:pointer"><div class="ico">' + icon(t.icon, 32) + '</div><div class="t">' + esc(t.t) + '</div><div class="s">' + esc(t.s) + '</div></div>'); });
+    $$('.simple-tile', wrap).forEach((el, i) => el.onclick = tiles[i].click);
+    row.insertAdjacentElement('beforeend', left);
+    // right: today + recent
+    const right = html('<div class="card"><div class="card-head"><h3>Today</h3></div><div class="mt"></div></div>');
+    const rbody = $('.mt', right);
+    rbody.innerHTML = '<div style="font-size:13px;color:var(--muted)">' + fmtDate(today) + ' · ' + DOW[new Date(today + 'T00:00:00Z').getUTCDay()] + '</div>' +
+      (attToday ? '<div class="mt"><div class="row"><b>Status</b><span style="margin-left:auto">' + badge(attToday.code) + '</span></div><div class="row mt-s"><b>In</b><span style="margin-left:auto">' + (attToday.inTime || '—') + '</span></div><div class="row mt-s"><b>Out</b><span style="margin-left:auto">' + (attToday.outTime || '—') + '</span></div><div class="row mt-s"><b>Worked</b><span style="margin-left:auto">' + fmtMins(attToday.workMinutes) + '</span></div>' + (attToday.flag === '1' ? '<div class="row mt-s"><b>Flag</b><span style="margin-left:auto">' + esc(attToday.flagReason || '') + '</span></div>' : '') + '</div>' : '<div class="mt">No punch recorded yet.</div>');
+    row.insertAdjacentElement('beforeend', right);
+    // leave balances mini
+    const lb = html('<div class="card"><div class="card-head"><h3>Leave Balances</h3></div><div class="mt"></div></div>');
+    const lbbody = $('.mt', lb);
+    if (bal.data.rows.length) {
+      lbbody.innerHTML = '<table class="tbl"><thead><tr><th>Type</th><th class="num">Available</th><th class="num">Used</th></tr></thead><tbody>' +
+        bal.data.rows.map((r) => '<tr><td>' + esc(r.typeId) + '</td><td class="num">' + Number(r.available || 0).toFixed(1) + '</td><td class="num">' + Number(r.used || 0).toFixed(1) + '</td></tr>').join('') + '</tbody></table>';
+    } else lbbody.innerHTML = emptyHtml('No balances', 'Leave balances not yet computed.', 'inbox');
+    row.insertAdjacentElement('beforeend', lb);
+  } catch (e) { errorBox(host, e); }
+}
+
+async function self_attendance(id){
+  const host = $('#view');
+  host.innerHTML = '<div class="view">' + pageHead('Attendance', 'Mark check-in / check-out and view your month.') +
+    '<div class="grid g2"><div id="selfAttPunch" class="card"></div><div id="selfAttMonth" class="card"></div></div></div>';
+  const punch = $('#selfAttPunch');
+  punch.innerHTML = '<div class="card-head"><h3>Punch</h3></div><div class="mt" style="padding:16px"><div class="row spread" style="gap:12px"><button class="btn success lg block" id="btnPunchIn">' + icon('login', 24) + ' Punch In</button><button class="btn danger lg block" id="btnPunchOut">' + icon('logout', 24) + ' Punch Out</button></div><div id="punchStatus" class="mt"></div></div></div>';
+  $('#btnPunchIn').onclick = () => doPunch('in', $('#btnPunchIn'));
+  $('#btnPunchOut').onclick = () => doPunch('out', $('#btnPunchOut'));
+  // month calendar
+  const monthEl = $('#selfAttMonth');
+  const ym = todayStr().slice(0, 7);
+  monthEl.innerHTML = '<div class="card-head"><h3>' + fmtMonth(ym) + '</h3></div><div class="mt" id="selfAttCal" style="padding:16px">' + skelCards(1) + '</div>';
+  try {
+    const att = await callApi('att.liveboard', { date: todayStr() });
+    // fetch full month via muster
+    const muster = await callApi('att.muster', { month: ym });
+    // build punches map
+    const punches = {}; const days = [];
+    const d = new Date(Number(ym.slice(0,4)), Number(ym.slice(5,7)) - 1, 1);
+    while (d.getMonth() === Number(ym.slice(5,7)) - 1) { days.push(todayStr().slice(0,4) + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0')); d.setDate(d.getDate() + 1); }
+    (muster.data.rows || []).forEach((r) => { r.days.forEach((day) => { punches[day.date] = day; }); });
+    const attData = { month: ym, days: days.map((date) => ({ date: date, code: (punches[date] && punches[date].code) || '-', inTime: (punches[date] && punches[date].inTime) || '', outTime: (punches[date] && punches[date].outTime) || '' })), punches: punches, holidays: [] };
+    $('#selfAttCal').innerHTML = calendarHtml(attData);
+    wireCalendar($('#selfAttCal'), attData);
+  } catch (e) { $('#selfAttCal').innerHTML = '<div class="meta">Could not load calendar.</div>'; }
+}
+
+async function doPunch(dir, btn){
+  if (!S.boot) return;
+  const empId = S.boot.user.userId;
+  if (btn) { btn.disabled = true; btn.classList.add('loading'); }
+  try {
+    // request geolocation
+    let lat = 0, lng = 0, acc = 0;
+    try {
+      const pos = await new Promise((resolve, reject) => navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 10000 }));
+      lat = pos.coords.latitude; lng = pos.coords.longitude; acc = pos.coords.accuracy || 0;
+    } catch (e) { /* no geo */ }
+    const res = await callApi('att.checkin', { token: S.token, empId: empId, lat: lat, lng: lng, acc: acc });
+    toast(dir === 'in' ? 'Checked in successfully.' : 'Checked out successfully.', 'success');
+    self_attendance();
+  } catch (e) {
+    toast(e.message || 'Punch failed.', 'error');
+  } finally { if (btn) { btn.disabled = false; btn.classList.remove('loading'); } }
+}
+
+async function openLeaveModal(){
+  const empId = S.boot.user.userId;
+  const types = await callApi('lv.typelist', {});
+  const bal = await callApi('lv.balances', { empId: empId });
+  formModal({ title: 'Apply for Leave', fields: [
+    { name: 'typeId', label: 'Leave type', type: 'select', required: true, options: types.data.rows.map((t) => ({ v: t.typeId, l: t.name })) },
+    { name: 'fromDate', label: 'From date', type: 'date', required: true },
+    { name: 'toDate', label: 'To date', type: 'date', required: true },
+    { name: 'days', label: 'Days', type: 'number', required: true, min: 0.5 },
+    { name: 'halfDay', label: 'Half day', type: 'checkbox' },
+    { name: 'half', label: 'Which half', type: 'select', options: [{ v: 'first', l: 'First half' }, { v: 'second', l: 'Second half' }] },
+    { name: 'reason', label: 'Reason', type: 'textarea', required: true, rows: 2 },
+    { name: 'attachment', label: 'Document (optional)', type: 'file', accept: '.pdf,.jpg,.png' }
+  ], onSubmit: async (data) => {
+    // upload attachment first if any
+    let attachment = '';
+    if (data.attachment) {
+      const up = await readUpload(data.attachment, { limitBytes: 2 * 1024 * 1024 });
+      // store file via drive - simplified: we need a server file.store; skip attachment for MVP
+      attachment = 'attached';
+    }
+    const res = await callApi('lv.apply', { token: S.token, empId: empId, typeId: data.typeId, fromDate: data.fromDate, toDate: data.toDate, days: Number(data.days), halfDay: data.halfDay ? '1' : '0', half: data.half, reason: data.reason, attachment: attachment });
+    toast(res.message || 'Leave applied.', 'success');
+    self_dashboard();
+  }});
+}
+
+async function self_payslip(id){
+  const host = $('#view');
+  const empId = S.boot.user.userId;
+  host.innerHTML = '<div class="view">' + pageHead('Payslips', 'View and download your monthly payslips.') +
+    '<div class="mt"><div class="row spread" style="gap:8px"><input type="text" id="psYM" placeholder="YYYY-MM" value="' + todayStr().slice(0,7) + '" style="width:140px"><button class="btn" id="psGo">' + icon('search', 16) + ' View</button></div></div><div id="psArea" class="mt"></div></div>';
+  $('#psGo').onclick = async () => {
+    const ym = $('#psYM').value;
+    const area = $('#psArea'); area.innerHTML = '<div style="padding:24px">' + spinner() + ' Loading…</div>';
+    try {
+      const res = await callApi('pay.payslip', { token: S.token, empId: empId, yearMonth: ym });
+      if (!res.fileId) { area.innerHTML = emptyHtml('No payslip', 'Payslip not available for ' + ym + '.', 'inbox'); return; }
+      area.innerHTML = '<div class="card" style="padding:24px"><div class="row spread"><h3>Payslip — ' + fmtMonth(ym) + '</h3><button class="btn" onclick="openFile(\'' + res.fileId + '\', \'Payslip\')">' + icon('file', 20) + ' View PDF</button> <button class="btn" onclick="downloadPayslip(\'' + res.fileId + '\', \'' + res.empId + '_' + ym + '\')">' + icon('download', 20) + ' Download</button></div><p class="muted mt-s">PDF stored securely. Only you and HR/Accounts can view it.</p></div>';
+    } catch (e) { area.innerHTML = '<div class="meta">' + esc(e.message) + '</div>'; }
+  };
+  $('#psGo').click();
+}
+function downloadPayslip(fileId, name){
+  callApi('file.get', { fileId: fileId }).then((f) => { downloadB64(name + '.pdf', 'application/pdf', f.data); }).catch((e) => toast(e.message, 'error'));
+}
+
+async function self_profile(id){
+  const host = $('#view');
+  const empId = S.boot.user.userId;
+  host.innerHTML = '<div class="view">' + pageHead('My Profile', 'Your personal and job information.') +
+    '<div id="profArea" class="mt"></div></div>';
+  const area = $('#profArea'); area.innerHTML = '<div style="padding:24px">' + spinner() + ' Loading…</div>';
+  try {
+    const emp = await callApi('org.employee.get', { empId: empId });
+    area.innerHTML = '<div class="grid g3"><div class="card"><div class="card-head"><h3>Profile</h3></div><div class="mt" style="padding:16px">' +
+      '<div class="row"><div style="width:96px;height:96px;border-radius:50%;background:var(--primary-soft);color:var(--primary);display:grid;place-items:center;font-size:32px;font-weight:700">' + esc(initials(emp.row.name)) + '</div>' +
+      '<div class="grow"><div style="font-size:18px;font-weight:700">' + esc(emp.row.name) + '</div><div class="meta">' + esc(emp.row.empCode) + ' · ' + esc(emp.row.designationId || 'Employee') + '</div></div></div>' +
+      '<table class="tbl mt"><tbody>' +
+      '<tr><td>Employee Code</td><td>' + esc(emp.row.empCode) + '</td></tr>' +
+      '<tr><td>Department</td><td>' + esc(emp.row.departmentId || '—') + '</td></tr>' +
+      '<tr><td>Branch</td><td>' + esc(emp.row.branchId || '—') + '</td></tr>' +
+      '<tr><td>Date of Joining</td><td>' + fmtDate(emp.row.doj) + '</td></tr>' +
+      '<tr><td>Employment Type</td><td>' + esc(emp.row.employmentType || '—') + '</td></tr>' +
+      '<tr><td>Status</td><td>' + badge(emp.row.status) + '</td></tr>' +
+      '<tr><td>Phone</td><td>' + esc(emp.row.phone || '—') + '</td></tr>' +
+      '<tr><td>Email</td><td>' + esc(emp.row.email || '—') + '</td></tr>' +
+      '</tbody></table></div></div>' +
+      '<div class="card span2"><div class="card-head"><h3>Change Requests</h3></div><div class="mt" style="padding:16px">' +
+      '<button class="btn" onclick="openProfileChangeModal()">' + icon('edit', 18) + ' Request profile change</button>' +
+      '<p class="meta mt-s">Bank, address, contact or other personal changes go to HR for approval.</p>' +
+      '</div></div></div>';
+  } catch (e) { errorBox(area, e); }
+}
+function openProfileChangeModal(){
+  formModal({ title: 'Request Profile Change', fields: [
+    { name: 'field', label: 'Field to change', type: 'select', required: true, options: [{ v: 'phone', l: 'Phone' }, { v: 'email', l: 'Email' }, { v: 'address', l: 'Address' }, { v: 'emergencyContact', l: 'Emergency contact' }, { v: 'bank', l: 'Bank details' }] },
+    { name: 'newValue', label: 'New value', type: 'text', required: true },
+    { name: 'reason', label: 'Reason', type: 'textarea', required: true, rows: 2 }
+  ], onSubmit: async (data) => {
+    const res = await callApi('wf.create', { token: S.token, type: 'PROFILE_CHANGE', empId: S.boot.user.userId, data: { field: data.field, newValue: data.newValue, reason: data.reason } });
+    toast(res.message || 'Request submitted.', 'success');
+    self_profile();
+  }});
+}
+
+async function self_helpdesk(id){
+  const host = $('#view');
+  host.innerHTML = '<div class="view">' + pageHead('Support', 'Raise a ticket for payroll, attendance, IT or admin help.') +
+    '<div class="grid g2"><div id="hdNew" class="card"></div><div id="hdList" class="card"></div></div></div>';
+  $('#hdNew').innerHTML = '<div class="card-head"><h3>Raise Ticket</h3></div><div class="mt" style="padding:16px">' +
+    formHtml([{ name: 'category', label: 'Category', type: 'select', required: true, options: [{ v: 'Payroll', l: 'Payroll' }, { v: 'Attendance', l: 'Attendance' }, { v: 'Leave', l: 'Leave' }, { v: 'IT', l: 'IT' }, { v: 'Admin', l: 'Admin' }, { v: 'General', l: 'General' }] },
+    { name: 'subject', label: 'Subject', type: 'text', required: true },
+    { name: 'description', label: 'Description', type: 'textarea', required: true, rows: 3 }]) +
+    '<button class="btn mt" id="hdRaise">' + icon('plus', 16) + ' Raise</button></div></div>';
+  $('#hdRaise').onclick = async () => {
+    const root = $('#hdNew form'); const data = readForm(root, [
+      { name: 'category', label: 'Category', type: 'select', required: true },
+      { name: 'subject', label: 'Subject', type: 'text', required: true },
+      { name: 'description', label: 'Description', type: 'textarea', required: true }
+    ]); if (!data) return;
+    try { await callApi('helpdesk.raise', { token: S.token, category: data.category, subject: data.subject, description: data.description }); toast('Ticket raised.', 'success'); self_helpdesk(); }
+    catch (e) { toast(e.message, 'error'); }
+  };
+  // list
+  const listEl = $('#hdList');
+  listEl.innerHTML = '<div class="card-head"><h3>My Tickets</h3></div><div class="mt" id="hdTickets" style="padding:16px">' + skelTable(3, 4) + '</div>';
+  try {
+    const res = await callApi('helpdesk.tickets', {});
+    $('#hdTickets').innerHTML = '<table class="tbl"><thead><tr><th>Subject</th><th>Category</th><th>Status</th><th>Raised</th></tr></thead><tbody>' +
+      (res.data.rows || []).map((t) => '<tr><td>' + esc(t.subject) + '</td><td>' + badge(t.category) + '</td><td>' + badge(t.status) + '</td><td>' + fmtDate(t.createdAt) + '</td></tr>').join('') + '</tbody></table>';
+  } catch (e) { $('#hdTickets').innerHTML = '<div class="meta">' + esc(e.message) + '</div>'; }
+}
+</script>
