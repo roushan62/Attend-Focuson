@@ -1,0 +1,6 @@
+{
+  "scriptId": "REPLACE_WITH_YOUR_APPS_SCRIPT_PROJECT_ID",
+  "rootDir": "src",
+  "fileExtension": "gs",
+  "uploadOnSave": true
+}

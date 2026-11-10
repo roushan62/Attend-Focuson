@@ -1,0 +1,733 @@
+<script>
+/* =====================================================================
+   FocusOn HRMS 2.0 — Client Core (JsCore.html)
+   Primitives, API layer, shell, router, auth screens.
+   ===================================================================== */
+
+/* ---------- theme applied before first paint ---------- */
+(function(){
+  try {
+    var t = localStorage.getItem('focuson.theme');
+    if (!t && window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches) t = 'dark';
+    if (t) document.documentElement.setAttribute('data-theme', t);
+  } catch (e) {}
+})();
+
+/* ---------- DOM / string helpers ---------- */
+const $ = (s, el) => (el || document).querySelector(s);
+const $$ = (s, el) => Array.from((el || document).querySelectorAll(s));
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>\"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const attr = esc;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const debounce = (fn, ms) => { let tt; return (...a) => { clearTimeout(tt); tt = setTimeout(() => fn(...a), ms); }; };
+function html(str) { const t = document.createElement('template'); t.innerHTML = str.trim(); return t.content.firstElementChild; }
+function plural(n, w) { return n + ' ' + w + (n === 1 ? '' : 's'); }
+function initials(n) { return String(n || '?').split(/\s+/).filter(Boolean).slice(0, 2).map((x) => x[0]).join('').toUpperCase(); }
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const MONTHS_FULL = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+const DOW = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+function fmtDate(d){ if (!d) return '—'; const p = String(d).slice(0,10).split('-'); return p.length===3 ? (+p[2]) + ' ' + MONTHS[+p[1]-1] + ' ' + p[0] : d; }
+function fmtTime(iso){ return iso ? String(iso).slice(11,16) : '—'; }
+function fmtDateTime(iso){ return iso ? fmtDate(iso) + ', ' + fmtTime(iso) : '—'; }
+function fmtMonth(ym){ if (!ym) return '—'; return MONTHS_FULL[+ym.slice(5,7)-1] + ' ' + ym.slice(0,4); }
+function fmtInr(n, dec){
+  n = Number(n) || 0; const neg = n < 0; const v = Math.abs(n).toFixed(dec === undefined ? 2 : dec).split('.');
+  let i = v[0], last = i.slice(-3), rest = i.slice(0, -3);
+  i = rest ? rest.replace(/\B(?=(\d{2})+(?!\d))/g, ',') + ',' + last : last;
+  return (neg ? '−' : '') + '₹' + i + (dec !== 0 ? '.' + v[1] : '');
+}
+function fmtMins(m){ m = Math.round(m || 0); return Math.floor(m/60) + 'h ' + String(m % 60).padStart(2,'0') + 'm'; }
+function todayStr(){ return S.boot && S.boot.now ? S.boot.now.today : new Date().toISOString().slice(0,10); }
+function safeStore(k, v){ try { if (v === undefined) return localStorage.getItem(k); if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) { S.mem = S.mem || {}; if (v === undefined) return S.mem[k] || null; S.mem[k] = v; } return null; }
+
+/* ---------- icon set (inline SVG) ---------- */
+const IC = {
+  home:'<path d="M3 12l2-2m0 0l7-7 7 7M5 12v10a2 2 0 002 2h10a2 2 0 002-2v-10m-9-3v3m0 0v3m0-3h3m-3 0l-3 3"/><path d="M9 21H6a2 2 0 01-2-2V5a2 2 0 012-2h3"/><path d="M16 3.13A4 4 0 0112.5 3h-1A4 4 0 004.5 11.88"/><path d="M3 12l2-2m0 0l7-7 7 7M5 12v10a2 2 0 002 2h10a2 2 0 002-2v-10M9 21H6a2 2 0 01-2-2V5a2 2 0 012-2h3M12 17a3 3 0 11-6 0 3 3 0 016 0z"/>',
+  users:'<path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/><path d="M9 21v-2a4 4 0 00-4-4v2M17 21v-2a4 4 0 00-4-4v2"/><circle cx="18" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>',
+  calendar:'<rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>',
+  wallet:'<path d="M12 2c-4.5 0-6.5 3-7 7.5v11c0 .6.4 1 1 1h10c.6 0 1-.4 1-1V9.5c0-4.5-2-7.5-6.5-7.5z"/>',
+  user:'<path d="M19 21v-2a4 4 0 00-4-4H9a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/>',
+  shield:'<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
+  sliders:'<line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="20" x2="4" y2="20"/><line x1="4" y1="15" x2="4" y2="15"/><line x1="4" y1="10" x2="4" y2="10"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="8"/><line x1="12" y1="3" x2="12" y2="3"/><line x1="12" y1="2" x2="12" y2="2"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="15" x2="20" y2="15"/><line x1="20" y1="10" x2="20" y2="10"/><line x1="20" y1="3" x2="20" y2="3"/>',
+  grid:'<rect x="3" y="3" width="7" height="7" rx="1" ry="1"/><rect x="14" y="3" width="7" height="7" rx="1" ry="1"/><rect x="3" y="14" width="7" height="7" rx="1" ry="1"/><rect x="14" y="14" width="7" height="7" rx="1" ry="1"/>',
+  building:'<path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V1a2 2 0 012-2h18a2 2 0 012 2z"/><path d="M7 10v8M12 10v8M17 10v8"/><path d="M7 3v7M12 3v7M17 3v7"/><path d="M3 12h18M3 18h18"/>',
+  lifebuoy:'<circle cx="12" cy="12" r="4"/><path d="M9.09 9.09a7 7 0 01-1.41 1.41l.71.71a7 7 0 001.41-1.41zM15.82 15.82l-.71.71a7 7 0 01-1.41-1.41l.71-.71a7 7 0 001.41 1.41zM15.82 4.18l-.71-.71a7 7 0 001.41 1.41l.71.71a7 7 0 01-1.41-1.41zM9.09 14.91l-.71-.71a7 7 0 001.41 1.41l.71.71a7 7 0 01-1.41-1.41z"/>',
+  search:'<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>',
+  login:'<path d="M15 18h6l-5-5 5-5H15"/><path d="M3 12a2 2 0 012-2h14M3 12a2 2 0 012 2v1a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>',
+  logout:'<path d="M9 18h6l-5-5 5-5H9M3 12a2 2 0 012-2h14M3 12a2 2 0 012 2v1a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>',
+  bell:'<path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 24a2.29 2.29 0 011.54 0M13.73 24A2.29 2.29 0 0112.19 22.5l.5-.5"/><path d="M16 24h-4"/><path d="M10.5 22.5l.5.5"/>',
+  key:'<path d="M21 2l-2 2m-7.61 7.61a5 5 0 11-7.07-7.071M21 12a2 2 0 11-4 0 2 2 0 014 0z"/>',
+  leaf:'<path d="M14 6a6 6 0 01-4.5 14.5C5.88 18.09 5 17.42 5 16.5c0-1.5 1-2 3-1M18 18a6 6 0 01-4.5 14.5C18.12 18.09 19 17.42 19 16.5c0-1.5-1-2-3-1"/>',
+  checkcircle:'<path d="M12 18c3.57 0 6.43-2.58 6.43-6a6.43 6.43 0 00-6.43-6.43 6.43 6.43 0 00-6.43 6.43C5.57 15.42 8.43 18 12 18z"/><path d="M17.5 8.38l-3.07 3.07-1.31-1.31L9 12.3l2.19 2.19L19 10.31z"/>',
+  xcircle:'<path d="M12 18c3.57 0 6.43-2.58 6.43-6a6.43 6.43 0 00-6.43-6.43 6.43 6.43 0 00-6.43 6.43C5.57 15.42 8.43 18 12 18z"/><path d="M15 9l6 6"/><path d="M21 9l-6 6"/>',
+  alert:'<path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
+  file:'<path d="M13 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V9z"/><polyline points="13 2 13 9 20 9"/>',
+  download:'<path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/>',
+  upload:'<path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l5 5 5 5M12 17V3"/>',
+  briefcase:'<rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 00-2-2H6a2 2 0 00-2 2v16m0 0h8"/><path d="M8 21V5a2 2 0 012-2h8a2 2 0 012 2v16M16 21v0"/>',
+  receipt:'<path d="M4 2h16l2 4 1 2 1 1v20a2 2 0 01-2 2H6a2 2 0 01-2-2V4z"/><line x1="10" y1="2" x2="10" y2="20"/><line x1="14" y1="6" x2="14" y2="14"/>',
+  walltet:'<path d="M12 2c-4.5 0-6.5 3-7 7.5v11c0 .6.4 1 1 1h10c.6 0 1-.4 1-1V9.5c0-4.5-2-7.5-6.5-7.5z"/><path d="M3 11a2 2 0 002-2h14a2 2 0 002 2v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>',
+  eye:'<path d="M1 12s4-8 11-8 11 8 11 8-11 8-11-8z"/><circle cx="12" cy="12" r="3"/>',
+  eyeoff:'<path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.81z"/><line x1="1" y1="1" x2="23" y2="23"/>',
+  chevL:'<polyline points="15 18 9 12 15 6"/>',
+  chevR:'<polyline points="9 18 15 12 9 6"/>',
+  moon:'<path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/>',
+  sun:'<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>',
+  menu:'<line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/>',
+  refresh:'<path d="M23 4v4m0 0v4m0-4a2 2 0 01-2 2H7a2 2 0 01-2-2V4m0 0a2 2 0 002-2v-0a2 2 0 00-2-2v0M7 20v-4m0 0v-4m0 4a2 2 0 002-2h10a2 2 0 002-2V4m0 0a2 2 0 012 2v0a2 2 0 01-2 2v0"/><line x1="7" y1="20" x2="12" y2="15"/><line x1="23" y1="4" x2="12" y2="9"/>',
+  up:'<polyline points="5 12 12 5 19 12"/>',
+  down:'<polyline points="19 12 12 19 5 12"/>',
+  flat:'<line x1="5" y1="12" x2="19" y2="12"/>',
+  transfer:'<path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4l5 5 5-5h4a2 2 0 012 2v14a2 2 0 01-2 2z"/><path d="M5 19h14M12 21V3M17 8l5-5-5-5"/>',
+  pin:'<path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/>',
+  lifebuoy_:'<circle cx="12" cy="12" r="4"/><path d="M9.09 9.09a7 7 0 01-1.41 1.41l.71.71a7 7 0 001.41-1.41zM15.82 15.82l-.71.71a7 7 0 01-1.41-1.41l.71-.71a7 7 0 001.41 1.41zM15.82 4.18l-.71-.71a7 7 0 001.41 1.41l.71.71a7 7 0 01-1.41-1.41zM9.09 14.91l-.71-.71a7 7 0 001.41 1.41l.71.71a7 7 0 01-1.41-1.41z"/>',
+  tag:'<path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h4l7.17 7.17a2 2 0 010 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/>',
+  id:'<rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 00-2-2H6a2 2 0 00-2 2v16m0 0h8"/><path d="M8 21V5a2 2 0 012-2h8a2 2 0 012 2v16M16 21v0"/>',
+  printer:'<polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2M6 14V2a2 2 0 012-2h4a2 2 0 012 2v12"/><rect x="8" y="13" width="8" height="4" rx="1" ry="1"/>',
+  chart:'<line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>',
+  pie:'<path d="M21.21 15.21A10 10 0 018 11"/><path d="M22 12A10 10 0 0012 2z"/><circle cx="12" cy="12" r="3"/>',
+  arrowRight:'<line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>',
+  lock:'<rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4M7 11V7a5 5 0 0110 0v4M7 15v2a2 2 0 002 2h6a2 2 0 002-2v-2"/>',
+  unlock:'<path d="M11 7a6 6 0 016 6v7a2 2 0 002 2h6a2 2 0 002-2V7a6 6 0 00-6-6H9a6 6 0 00-6 6v7a2 2 0 01-2 2H3a2 2 0 012-2V7a2 2 0 012-2z"/><path d="M13 13h6"/><path d="M13 13v6"/>',
+  sparkle:'<path d="M10.43 15.17l-1.46 4.24-3.69-1.52-1.52-3.69 4.24-1.46 1.46-4.24 3.69 1.52 1.52 3.69z"/><line x1="5" y1="2" x2="5" y2="2"/><line x1="12" y1="12" x2="12" y2="12"/><line x1="19" y1="22" x2="19" y2="22"/><line x1="22" y1="19" x2="22" y2="19"/><line x1="2" y1="22" x2="2" y2="22"/><line x1="22" y1="2" x2="22" y2="2"/><line x1="22" y1="2" x2="22" y2="2"/><line x1="22" y1="2" x2="22" y2="2"/>',
+  inbox:'<polyline points="22 12 16 12 14 15 12 12 8 12 2 12"/><path d="M16 16H4a2 2 0 01-2-2V6a2 2 0 012-2h12a2 2 0 012 2v8z"/>',
+  warning:'<path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
+  info:'<circle cx="12" cy="12" r="1"/><path d="M12 12v4M12 2v4"/><path d="M12 12v4M12 2v4"/><path d="M12 12v4M12 2v4"/>',
+  link:'<path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.73"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/>',
+  plus:'<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
+  minus:'<line x1="5" y1="12" x2="19" y2="12"/>',
+  edit:'<path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>',
+  trash:'<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>',
+  save:'<path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/><line x1="7" y1="12" x2="21" y2="12"/>',
+  print:'<polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2M6 14V2a2 2 0 012-2h4a2 2 0 012 2v12"/><rect x="8" y="13" width="8" height="4" rx="1" ry="1"/>',
+  clock:'<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
+  mail:'<path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/>',
+  phone:'<path d="M15.5 5.5a2 2 0 010 2.828M3 9a6 6 0 018.485 8.485L19 21l1.414-1.414A6 6 0 0121 15c0-1.414-.39-2.828-1.03-4.085L14.39 8.45A2 2 0 0113.5 7a2 2 0 010-2.828z"/><path d="M17.5 4.5a4 4 0 010 5.657M14 17a2 2 0 010-2.828M17 14a2 2 0 010-2.828M12 10a2 2 0 010-2.828M9 13a2 2 0 010-2.828"/><path d="M5 13a2 2 0 010-2.828M3 16a2 2 0 010-2.828"/><path d="M11 17a2 2 0 010-2.828M13 17a2 2 0 010-2.828"/><path d="M15 17a2 2 0 010-2.828"/>',
+  camera:'<path d="M15 18a3 3 0 100-6 3 3 0 000 6z"/><path d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/><path d="M23 14v2a3 3 0 01-3 3H4a3 3 0 01-3-3v-2"/><circle cx="12" cy="14" r="4"/>',
+  filter:'<polygon points="22 3 2 3 10 12.46 10 12"/><path d="M2 12v12h20V12M12 16h0"/><path d="M12 16h0"/>',
+  sort:'<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
+  chevUp:'<polyline points="18 15 12 9 6 15"/>',
+  chevDown:'<polyline points="18 9 12 15 6 9"/>',
+  wifi:'<path d="M5 12.55a11 11 0 0114.08 0M1.42 9a16 16 0 0120.16 0M8.53 16.11a6 6 0 017.38 0M20.77 7A12 12 0 0122 12c0 1.84-.73 3.43-1.86 4.68"/><path d="M20.77 7A12 12 0 0122 12c0 1.84-.73 3.43-1.86 4.68"/>',
+  signal:'<path d="M1 3l4 12M6 3l4 12M11 3l4 12M16 3l4 12"/><path d="M1 3l4 12M6 3l4 12M11 3l4 12M16 3l4 12"/>',
+  battery:'<rect x="1" y="6" width="15" height="12" rx="2" ry="2"/><line x1="23" y1="13" x2="23" y2="13"/>',
+  wifi_off:'<path d="M17.5 17.5a10.5 10.5 0 01-14.14 0M8.585 5.414l12.236 12.236M7.92 13.92a12 12 0 016.16-6.16M11.92 13.92h0"/><path d="M18.13 13.92c-.82-.82-.97-2-.5-3.25"/><path d="M11.92 13.92h0"/><path d="M11.92 13.92h0"/><path d="M11.92 13.92h0"/>',
+  award:'<circle cx="12" cy="8" r="7"/><polyline points="8.21 13.89 7 23 12 20 17 23 15.79 13.88"/><path d="M12 3v1M12 19v1"/><path d="M5 11h14"/><path d="M12 11h0"/>',
+  triangle:'<path d="M12 2L4 20l8-12z"/>',
+  ticket:'<path d="M5 10H4a2 2 0 00-2 2v8a2 2 0 002 2h1a2 2 0 002-2v-2a2 2 0 002-2h8a2 2 0 002 2v2a2 2 0 002 2h1a2 2 0 002-2V4a2 2 0 00-2-2H5a2 2 0 00-2 2v6M11 10h2a1 1 0 011 1v2a1 1 0 01-1 1h-2a1 1 0 01-1-1v-2a1 1 0 011-1M14 14a2 2 0 11-4 0 2 2 0 014 0z"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="12" y1="23" x2="15" y2="23"/><line x1="15" y1="23" x2="15" y2="19"/><line x1="15" y1="19" x2="12" y2="19"/>',
+  battery_charging:'<rect x="1" y="6" width="15" height="12" rx="2" ry="2"/><polyline points="22 13 22 13"/><polygon points="13 2 26 2 26 10 13 10"/>',
+  code:'<polyline points="16 18 2 12 16 6"/><polyline points="12 18 8 12 12 6"/>',
+  code_2:'<line x1="16" y1="18" x2="2" y2="12"/><line x1="16" y1="6" x2="2" y2="12"/><line x1="16" y1="18" x2="16" y2="6"/><line x1="12" y1="18" x2="8" y2="12"/><line x1="12" y1="6" x2="8" y2="12"/><line x1="12" y1="18" x2="12" y2="6"/>',
+  dollarsign:'<line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/><path d="M21 15H4a1 1 0 010-2h17a1 1 0 000-2z"/>',
+  wifi_2:'<path d="M5 12.55a11 11 0 0114.08 0M1.42 9a16 16 0 0120.16 0M8.53 16.11a6 6 0 017.38 0"/><path d="M20.77 7A12 12 0 0122 12c0 1.84-.73 3.43-1.86 4.68"/>',
+  pill:'<path d="M12 2C6.47 2 2 6.47 2 12s4.47 10 10 10 10-4.47 10-10S17.53 2 12 2zm0 2a8 8 0 00-8 8h2a6 6 0 0112 0h2a8 8 0 00-8-8z"/>',
+  coffee:'<path d="M13 7H9m10 13H5M18 9h-2.533A5 5 0 0015 3h2m-10 12a5 5 0 015-5h2a5 5 0 015 5M15 11h-2"/><path d="M13 7H9m10 13H5M18 9h-2.533A5 5 0 0015 3h2m-10 12a5 5 0 015-5h2a5 5 0 015 5M15 11h-2"/>',
+  info_2:'<circle cx="12" cy="12" r="1"/><path d="M11 2v6M13 2v6M12 6v12M12 12l-1-1"/><path d="M12 12l-1-1"/><path d="M12 12l-1-1"/><path d="M12 12l-1-1"/>',
+  type:'<polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/>',
+  megaphone:'<path d="M11 5H2a2 2 0 00-2 2v10a2 2 0 002 2h9c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2z"/><path d="M25 11l-5 8M25 11l5 8M25 11l2 4M25 11l-2 4M21 15l12 3M21 15l12-3M21 15l3 2M21 15l-3 2"/><path d="M21 15l3 2"/><path d="M21 15l-3 2"/>',
+  gas:'<path d="M20 7h-2M20 7h-2M20 7h-2M20 7h-2M20 7h-2M20 7h-2M20 7h-2M20 7h-2M20 7h-2M20 7h-2"/><path d="M20 7h-2M20 7h-2M20 7h-2M20 7h-2M20 7h-2M20 7h-2M20 7h-2M20 7h-2M20 7h-2M20 7h-2"/>',
+  paint:'<path d="M22 12c0 2.76-1.41 5.19-3.49 6.84C15.55 19.44 14 19 12 19c-2 0-3.55.44-4.51 1.84C4.41 17.19 3 14.76 3 12c0-2.67 2.27-5 4.89-5a4.9 4.9 0 012.21.56L8 12a1 1 0 00-.76-.37L2 6.12C1.39 4.57 2 2.64 3.41 2h10.87c1.53 0 2.94 1.48 2.69 3L16.5 10a1 1 0 00.76 1.24z"/><path d="M22 12c0 2.76-1.41 5.19-3.49 6.84C15.55 19.44 14 19 12 19c-2 0-3.55.44-4.51 1.84C4.41 17.19 3 14.76 3 12c0-2.67 2.27-5 4.89-5a4.9 4.9 0 012.21.56L8 12a1 1 0 00-.76-.37L2 6.12C1.39 4.57 2 2.64 3.41 2h10.87c1.53 0 2.94 1.48 2.69 3L16.5 10a1 1 0 00.76 1.24z"/>',
+  sword:'<line x1="19" y1="1" x2="14" y2="6"/><line x1="15" y1="4" x2="15" y2="20"/><path d="M14 6h5M10 16l-4-4M14 10l4-4"/><path d="M14 6h5M10 16l-4-4M14 10l4-4"/>',
+  scanner:'<path d="M3 13a2 2 0 012-2h14a2 2 0 012 2v2H3z"/><path d="M5 7a2 2 0 012-2h10a2 2 0 012 2v7H5z"/><path d="M11 5H7a2 2 0 00-2 2v10a2 2 0 002 2h4a2 2 0 002-2V7a2 2 0 00-2-2z"/><path d="M13 5H9a2 2 0 00-2 2v10a2 2 0 002 2h4a2 2 0 002-2V7a2 2 0 00-2-2z"/>',
+  wallet_2:'<path d="M12 2c-4.5 0-6.5 3-7 7.5v11c0 .6.4 1 1 1h10c.6 0 1-.4 1-1V9.5c0-4.5-2-7.5-6.5-7.5z"/><path d="M3 11a2 2 0 002-2h14a2 2 0 002 2v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>',
+  log_out:'<path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4l5 5 5-5h4a2 2 0 012 2v14a2 2 0 01-2 2z"/><path d="M5 19h14M12 21V3M17 8l5-5-5-5"/>',
+  max:'<path d="M8 3H5a2 2 0 00-2 2v3M16 21h3a2 2 0 002-2v-3M3 16l3-3m0 0l3 3m-3-3l-3 3"/><path d="M8 3H5a2 2 0 00-2 2v3M16 21h3a2 2 0 002-2v-3M3 16l3-3m0 0l3 3m-3-3l-3 3"/>',
+  minimize:'<path d="M10 21H7a2 2 0 01-2-2V5a2 2 0 012-2h3M21 3h-3a2 2 0 00-2 2v3M14 8l4-4m0 0l-4 4m4-4v14"/><path d="M10 21H7a2 2 0 01-2-2V5a2 2 0 012-2h3M21 3h-3a2 2 0 00-2 2v3M14 8l4-4m0 0l-4 4m4-4v14"/>',
+  external:'<path d="M11 3H2a1 1 0 00-1 1v16a1 1 0 001 1h16a1 1 0 001-1v-9M16 16l5-5M16 11l5-5M16 11l-5 5M11 16l-5-5"/><path d="M11 3H2a1 1 0 00-1 1v16a1 1 0 001 1h16a1 1 0 001-1v-9M16 16l5-5M16 11l5-5M16 11l-5 5M11 16l-5-5"/>',
+  loader:null, // special spinner handled via CSS
+  '':'<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18a8 8 0 100-16 8 8 0 000 16zm0-14a2 2 0 100 4 2 2 0 000-4z"/><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18a8 8 0 100-16 8 8 0 000 16zm0-14a2 2 0 100 4 2 2 0 000-4z"/>'
+};
+function icon(n, size, cls){
+  var p = IC[n] || IC[''];
+  return '<svg class="ic ' + (cls || '') + '" width="' + (size || 18) + '" height="' + (size || 18) + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + p + '</svg>';
+}
+
+/* ---------- app state ---------- */
+var S = { token: safeStore('focuson.token') || '', boot: null, panel: '', view: '', params: [], cache: {}, mode: 'company', sidebarCollapsed: safeStore('focuson.collapsed') === '1', listState: {}, notif: null, mem: {} };
+
+/* ---------- toast / modal ---------- */
+function toast(msg, type, ms){
+  var t = html('<div class="toast ' + (type || 'info') + '" role="status">' + icon(type === 'success' ? 'checkcircle' : type === 'error' ? 'xcircle' : type === 'warn' ? 'alert' : 'info', 20) + '<div class="grow">' + esc(msg) + '</div><button class="icon-btn" style="width:26px;height:26px" aria-label="Dismiss">' + icon('x', 14) + '</button></div>');
+  var host = $('#toasts');
+  if (!host) { host = html('<div id="toasts" style="position:fixed;bottom:20px;right:20px;z-index:210;display:flex;flex-direction:column;gap:8px"></div>'); document.body.appendChild(host); }
+  host.appendChild(t);
+  var kill = () => { t.classList.add('out'); setTimeout(() => t.remove(), 220); };
+  setTimeout(kill, ms || 3500);
+  $('button', t).onclick = kill;
+}
+var modalStack = [];
+function openModal(o){
+  var drawer = !!o.drawer;
+  var bd = html('<div class="backdrop' + (drawer ? ' drawer' : '') + '"><div class="' + (drawer ? 'drawer-panel' : 'modal ' + (o.size || '')) + '" role="dialog" aria-modal="true"><div class="modal-head"><h3 class="grow ellipsis">' + esc(o.title || '') + '</h3><button class="icon-btn" data-x aria-label="Close">' + icon('x', 20) + '</button></div><div class="modal-body"></div>' + (o.footer === false ? '' : '<div class="modal-foot"></div>') + '</div></div>');
+  var body = $('.modal-body', bd), foot = $('.modal-foot', bd);
+  var api = { el: bd, body: body, foot: foot, closed: false,
+    close: function(result){ if (api.closed) return; api.closed = true; bd.classList.add('closing'); var i = modalStack.indexOf(api); if (i >= 0) modalStack.splice(i,1); setTimeout(() => bd.remove(), 170); if (o.onClose) o.onClose(result); },
+    setTitle: function(t){ $('h3', bd).textContent = t; }
+  };
+  $$('[data-x]', bd).forEach((b) => b.onclick = () => api.close());
+  bd.onclick = (e) => { if (e.target === bd && !o.persistent) api.close(); };
+  document.body.appendChild(bd); modalStack.push(api);
+  setTimeout(() => { var f = $('input:not([type=hidden]):not([readonly]),select,textarea', body); if (f && !o.noFocus && window.innerWidth > 767) f.focus(); }, 60);
+  document.addEventListener('keydown', function ke(e){ if (e.key === 'Escape' && modalStack.length) { var m = modalStack[modalStack.length - 1]; if (!m.persistent) m.close(); } });
+  return api;
+}
+function confirmDlg(o){
+  return new Promise((resolve) => {
+    var done = false;
+    var m = openModal({ title: o.title || 'Confirm?', size: 'sm', body: '<p style="margin:0">' + (o.html || esc(o.text || '')) + '</p>', buttons: [
+      { label: o.cancel || 'Cancel', cls: 'secondary', onClick: () => { done = true; m.close(false); resolve(false); } },
+      { label: o.ok || 'OK', cls: 'danger', onClick: () => { done = true; m.close(true); resolve(true); } }
+    ], onClose: () => { if (!done) resolve(false); } });
+  });
+}
+function optHtml(opts, val){ return (opts || []).map((o) => { const v = typeof o === 'object' ? o.v : o, l = typeof o === 'object' ? o.l : o; return '<option value="' + attr(v) + '"' + (String(v) === String(val == null ? '' : val) ? ' selected' : '') + '>' + esc(l) + '</option>'; }).join(''); }
+function fieldHtml(f, v){
+  const val = v !== undefined && v !== null ? v : (f.value !== undefined ? f.value : ''), id = 'f_' + f.name, type = f.type || 'text';
+  let input;
+  const common = ' id="' + id + '" name="' + f.name + '"' + (f.upper ? ' data-upper autocapitalize="characters" style="text-transform:uppercase"' : '') + (f.placeholder ? ' placeholder="' + attr(f.placeholder) + '"' : '') + (f.readonly ? ' readonly' : '') + (f.maxlength ? ' maxlength="' + f.maxlength + '"' : '') + (f.autocomplete ? ' autocomplete="' + f.autocomplete + '"' : '');
+  if (type === 'textarea') input = '<textarea' + common + ' rows="' + (f.rows || 2) + '">' + esc(val) + '</textarea>';
+  else if (type === 'select') input = '<select' + common + '>' + optHtml(f.options, val) + '</select>';
+  else if (type === 'file') input = '<input type="file"' + common + (f.accept ? ' accept="' + attr(f.accept) + '"' : '') + '>';
+  else if (type === 'checkbox') input = '<input type="checkbox"' + common + (val === '1' || val === true ? ' checked' : '') + ' style="width:18px;height:18px">';
+  else input = '<input type="' + type + '"' + common + (f.pattern ? ' pattern="' + f.pattern + '"' : '') + (f.min !== undefined ? ' min="' + f.min + '"' : '') + (f.max !== undefined ? ' max="' + f.max + '"' : '') + (f.minLength ? ' minlength="' + f.minLength + '"' : '') + ' value="' + esc(val) + '">';
+  var hint = f.hint ? '<div class="meta mt-s">' + esc(f.hint) + '</div>' : '';
+  return '<div class="field" data-field="' + attr(f.name) + '"><div class="row spread" style="align-items:baseline"><label>' + esc(f.label) + (f.required ? ' <span style="color:var(--danger)">*</span>' : '') + '</label>' + (f.section ? '' : '') + '</div>' + input + '<div class="err"></div>' + hint + '</div>';
+}
+function formHtml(fields, values){
+  values = values || {};
+  var out = '';
+  fields.forEach((f) => {
+    if (f.section) out += '<div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);border-top:1px solid var(--border);padding-top:12px;margin-top:12px">' + esc(f.section) + '</div>';
+    else out += fieldHtml(f, values[f.name]);
+  });
+  return '<form>' + out + '</form>';
+}
+function setFieldError(root, name, msg){
+  var f = $('[data-field="' + name + '"]', root); if (!f) return false;
+  f.classList.add('invalid'); var e = $('.err', f); if (e) e.textContent = msg; var i = $('input,select,textarea', f); if (i && !$('.invalid.focused', root)) { f.classList.add('focused'); try { i.focus(); } catch (x) {} } return true;
+}
+function clearErrors(root){ $$('.field.invalid', root).forEach((f) => f.classList.remove('invalid','focused')); $$('.err', root).forEach((e) => { e.textContent = ''; }); }
+function readForm(root, fields){
+  clearErrors(root); let ok = true; const data = {};
+  fields.forEach((f) => {
+    if (!f.name) return;
+    const el = $('#f_' + f.name, root); if (!el) return;
+    let v = f.type === 'checkbox' ? el.checked : f.type === 'file' ? (el.files && el.files[0]) || null : String(el.value).trim();
+    const bad = (m) => { setFieldError(root, f.name, m); ok = false; };
+    if (f.required && (v === '' || v === null || v === false)) { bad('This field is required.'); return; }
+    if (f.type === 'number') { const n = Number(v); if (!isFinite(n)) { bad('Enter a valid number.'); return; } if (f.min !== undefined && n < f.min) { bad('Must be at least ' + f.min + '.'); return; } if (f.max !== undefined && n > f.max) { bad('Must be at most ' + f.max + '.'); return; } }
+    if (f.validate) { const m = f.validate(v, data); if (m) { bad(m); return; } }
+    data[f.name] = v;
+  });
+  return ok ? data : null;
+}
+function wireForm(root){
+  $$('[data-pw]', root).forEach((b) => { b.onclick = () => { const i = b.previousElementSibling; const show = i.type === 'password'; i.type = show ? 'text' : 'password'; b.innerHTML = icon(show ? 'eyeoff' : 'eye', 18); }; });
+  root.addEventListener('input', (e) => { if (e.target.dataset && e.target.dataset.upper !== undefined) { const t = e.target, a = t.selectionStart; t.value = t.value.toUpperCase(); try { t.setSelectionRange(a, a); } catch (x) {} } const f = e.target.closest('.field'); if (f) { f.classList.remove('invalid'); const er = $('.err', f); if (er) er.textContent = ''; } });
+}
+function formModal(o){
+  const body = html('<div>' + (o.intro || '') + formHtml(o.fields, o.values) + '</div>');
+  var buttons = [{ label: o.cancel || 'Cancel', onClick: () => m.close() }, { id: 'submit', label: o.submit || 'Save', cls: o.danger ? 'danger' : '', icon: o.submitIcon, onClick: submit }];
+  if (o.extraButtons) buttons = buttons.concat(o.extraButtons);
+  var m = openModal({ title: o.title, size: o.size, body, persistent: o.persistent, buttons: buttons, drawer: o.drawer });
+  const form = $('form', body); wireForm(body);
+  form.addEventListener('submit', (e) => { e.preventDefault(); submit(m.submit); });
+  async function submit(btn){
+    const data = readForm(body, o.fields); if (!data) return;
+    try { const res = await o.onSubmit(data, btn || m.submit, m); if (res !== false) m.close(res); }
+    catch (e) { if (e && e.field && !setFieldError(body, e.field, e.message)) toast(e.message, 'error'); else if (e && e.message) toast(e.message, 'error'); }
+  }
+  if (o.onMount) o.onMount(body, m);
+  return m;
+}
+function readUpload(file, o){
+  o = o || {};
+  return new Promise((resolve, reject) => {
+    if (!file) return reject({ message: 'Please choose a file.' });
+    const max = o.maxBytes || 6 * 1024 * 1024;
+    const rd = new FileReader();
+    rd.onerror = () => reject({ message: 'Could not read the file.' });
+    rd.onload = () => {
+      const url = rd.result;
+      if (!/^image\/(jpeg|png|webp)$/.test(file.type) || o.noResize) {
+        if (file.size > max) return reject({ message: 'File is too large (max ' + Math.round(max / 1048576) + ' MB).' });
+        return resolve({ name: file.name, mime: file.type || 'application/octet-stream', data: String(url).split(',')[1] });
+      }
+      const img = new Image();
+      img.onerror = () => reject({ message: 'This image could not be read.' });
+      img.onload = () => {
+        const mime = o.png ? 'image/png' : 'image/jpeg'; let dim = o.maxDim || 1600, q = 0.82, out = '';
+        for (let attempt = 0; attempt < 8; attempt++) {
+          const k = Math.min(1, dim / Math.max(img.width, img.height)), c = document.createElement('canvas');
+          c.width = Math.max(1, Math.round(img.width * k)); c.height = Math.max(1, Math.round(img.height * k));
+          const ctx = c.getContext('2d'); if (o.png) ctx.clearRect(0,0,c.width,c.height); else { ctx.fillStyle = '#fff'; ctx.fillRect(0,0,c.width,c.height); }
+          ctx.drawImage(img, 0, 0, c.width, c.height); out = c.toDataURL(mime, q);
+          if (!o.limitBytes || out.length * 0.75 <= o.limitBytes) break;
+          if (o.png) dim = Math.round(dim * 0.75); else if (q > 0.35) q -= 0.12; else dim = Math.round(dim * 0.75);
+        }
+        if (o.limitBytes && out.length * 0.75 > o.limitBytes) return reject({ message: 'Image is still too large after compression. Use a smaller image.' });
+        resolve({ name: file.name.replace(/\.\w+$/, '') + (o.png ? '.png' : '.jpg'), mime: mime, data: out.split(',')[1] });
+      };
+      img.src = url;
+    };
+    rd.readAsDataURL(file);
+  });
+}
+function downloadB64(name, mime, data){
+  const bin = atob(data), bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const url = URL.createObjectURL(new Blob([bytes], { type: mime })), a = document.createElement('a');
+  a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+}
+async function openFile(fileId, title){
+  if (!fileId) { toast('No file attached.', 'warn'); return; }
+  var m = openModal({ title: title || 'File', size: 'lg', body: '<div class="center" style="padding:30px"><div class="spinner"></div><p class="muted mt">Loading file…</p></div>', buttons: [{ label: 'Close', onClick: () => m.close() }] });
+  try {
+    var f = await callApi('file.get', { fileId });
+    m.setTitle(f.name || title || 'File');
+    if (/^image\//.test(f.mime)) m.body.innerHTML = '<img class="preview-img" style="max-width:100%;max-height:600px" alt="" src="data:' + f.mime + ';base64,' + f.data + '">';
+    else m.body.innerHTML = '<div class="empty"><div class="ic-wrap">' + icon('file', 28) + '</div><h4>' + esc(f.name) + '</h4><p>Preview not available for this type.</p></div>';
+    var dl = html('<button class="btn mt">' + icon('download', 16) + ' Download</button>'); dl.onclick = () => downloadB64(f.name, f.mime, f.data); m.foot.insertBefore(dl, m.foot.firstChild);
+  } catch (e) { m.close(); }
+}
+
+/* ---------- small render helpers ---------- */
+const BADGE = { Approved:'green', Paid:'green', Active:'green', Present:'green', Resolved:'green', Working:'green', Pending:'amber', Open:'amber', Draft:'amber', 'In Progress':'blue', Late:'amber', 'Half Day':'amber', 'On Leave':'blue', 'On Duty':'primary', 'Duty Travel':'primary', Rejected:'red', Cancelled:'red', Suspended:'red', Closed:'red', Absent:'red', Inactive:'red', Exited:'red', 'Not Marked':'red', 'Not Punched In':'amber', 'On Hold':'amber', Invited:'amber', Temp:'amber', 'Weekly Off':'', Holiday:'primary' };
+function badge(s, cls){ return '<span class="badge ' + (cls !== undefined ? cls : (BADGE[s] || '')) + '">' + esc(s) + '</span>'; }
+function avatarHtml(name, size, fileId){ return '<div class="avatar ' + (size || '') + '" data-ph="' + attr(fileId || '') + '">' + esc(initials(name)) + '</div>'; }
+function skelLines(n){ let s = ''; for (let i = 0; i < n; i++) s += '<div class="sk line" style="width:' + (55 + (i * 17) % 40) + '%"></div>'; return s; }
+function skelTable(rows, cols){ let s = '<div>'; for (let i = 0; i < (rows || 5); i++) { s += '<div class="row" style="padding:12px 0;border-bottom:1px solid var(--border)">'; for (let j = 0; j < (cols || 4); j++) s += '<div class="sk line grow" style="margin:0"></div>'; s += '</div>'; } return s + '</div>'; }
+function skelStats(n){ let s = '<div class="grid g-stat">'; for (let i = 0; i < (n || 4); i++) s += '<div class="stat"><div class="sk circle" style="width:40px;height:40px"></div><div class="sk line" style="width:50%;height:26px"></div><div class="sk line" style="width:70%"></div></div>'; return s + '</div>'; }
+function skelCards(n){ let s = '<div class="grid g-auto">'; for (let i = 0; i < (n || 6); i++) s += '<div class="card"><div class="row"><div class="sk circle" style="width:48px;height:48px"></div><div class="grow"><div class="sk line" style="width:60%"></div><div class="sk line" style="width:40%"></div></div></div><div class="sk line mt"></div><div class="sk line" style="width:80%"></div></div>'; return s + '</div>'; }
+function emptyHtml(title, text, ic, action){ return '<div class="empty"><div class="ic-wrap">' + icon(ic || 'inbox', 30) + '</div><h4>' + esc(title) + '</h4>' + (text ? '<p>' + esc(text) + '</p>' : '') + (action || '') + '</div>'; }
+function statCard(o){
+  const tr = o.trend ? '<span class="trend ' + (o.trend.dir || 'flat') + '">' + icon(o.trend.dir === 'up' ? 'up' : o.trend.dir === 'down' ? 'down' : 'flat', 13) + esc(o.trend.text) + '</span>' : '';
+  return '<div class="stat' + (o.click ? ' click' : '') + '"' + (o.click ? ' data-go="' + attr(o.click) + '" style="cursor:pointer"' : '') + '><div class="top"><div class="ico ' + (o.color || '') + '">' + icon(o.icon, 20) + '</div>' + tr + '</div><div class="num">' + o.value + '</div><div class="lbl">' + esc(o.label) + '</div></div>';
+}
+function errorBox(host, e, retry){
+  host.innerHTML = '<div class="card">' + emptyHtml('Could not load this page', (e && e.message) || 'Please try again.', 'alert', '<button class="btn mt" data-retry>' + icon('refresh', 16) + ' Retry</button>') + '</div>';
+  const b = $('[data-retry]', host); if (b && retry) b.onclick = retry;
+}
+
+/* ---------- API layer (google.script.run.api) ---------- */
+var inflight = 0;
+function loadStart(){ inflight++; var p = $('#progress'); if (!p) return; p.classList.add('on'); p.style.width = '35%'; }
+function loadEnd(){ inflight = Math.max(0, inflight - 1); var p = $('#progress'); if (!p || inflight) return; p.style.width = '100%'; setTimeout(() => { if (!inflight) { p.classList.remove('on'); p.style.width = '0'; } }, 260); }
+if (!$('#progress')) { var pg = html('<div id="progress" style="position:fixed;top:0;left:0;height:4px;background:var(--primary);transform-origin:0;transform:scaleX(0);z-index:100;transition:transform .2s"></div>'); document.body.appendChild(pg); }
+var READ_ACTIONS = /(\.list|\.get|\.run|\.runs|\.today|\.month|\.search|\.mine|\.balances|\.precheck|\.dashboard|^dashboard$|^boot$|^me\.|^search\.|^people\.|^file\.get$|^holiday\.list$)/;
+function callApi(action, payload, opts){
+  opts = opts || {};
+  var btn = opts.btn;
+  if (btn && btn.disabled) return Promise.reject({ code: 'BUSY', message: 'Already processing.' });
+  if (btn) { btn.disabled = true; btn.classList.add('loading'); }
+  loadStart();
+  var my = ++S._callSeq || (S._callSeq = 1);
+  var promise = new Promise((resolve, reject) => {
+    google.script.run.withSuccessHandler(function(res){
+      loadEnd();
+      if (btn) { btn.disabled = false; btn.classList.remove('loading'); }
+      if (res && res.ok) resolve(res.data);
+      else reject(res && res.error ? res.error : { code: 'BAD_RESPONSE', message: 'Unexpected server response.', field: null });
+    }).withFailureHandler(function(e){
+      loadEnd();
+      if (btn) { btn.disabled = false; btn.classList.remove('loading'); }
+      reject(e && e.code ? e : { code: 'SERVER', message: String(e || 'Server error'), field: null });
+    }).api(action, payload);
+  });
+  // client-side retry for read actions on transient failure
+  if (READ_ACTIONS.test(action) && !opts.noRetry) {
+    promise = promise.catch((e) => {
+      if (e.code === 'SERVER' || e.code === 'BAD_RESPONSE') {
+        return sleep(800).then(() => callApi(action, payload, Object.assign({}, opts, { noRetry: true })));
+      }
+      throw e;
+    });
+  }
+  return promise;
+}
+function sessionLost(){
+  S.token = ''; safeStore('focuson.token', null); S.boot = null; renderAuth('company');
+}
+
+/* ---------- Spinner ---------- */
+function spinner(){ return '<div class="spinner" style="width:30px;height:30px;border:3px solid color-mix(in srgb,var(--border) 60%,transparent);border-top-color:var(--primary);border-radius:50%;animation:spin .8s linear infinite"></div>'; }
+var style = document.createElement('style'); style.textContent = '@keyframes spin{to{transform:rotate(360deg)}}'; document.head.appendChild(style);
+
+/* ---------- mountList (reused) ---------- */
+function mountList(host, cfg){
+  let api;
+  const key = cfg.id || cfg.action;
+  const st = S.listState[key] && cfg.remember !== false ? S.listState[key] : { q: '', page: 1, filters: Object.assign({}, cfg.defaultFilters), sort: cfg.sort || '', dir: cfg.dir || 'asc', mode: (cfg.cards && (safeStore('focuson.mode.' + key) || cfg.defaultMode)) || 'table' };
+  S.listState[key] = st; if (!st.sel) st.sel = {};
+  const pageSize = cfg.pageSize || 10;
+  const filtersHtml = (cfg.filters || []).map((f) => '<select data-filter="' + f.name + '" aria-label="' + attr(f.label) + '"><option value="">' + esc(f.label) + '</option>' + optHtml(f.options, st.filters[f.name]) + '</select>').join('');
+  const card = html('<div class="card"><div class="card-head"><div class="row"><h3>' + esc(cfg.title) + '</h3><span class="badge primary hide" data-count></span></div><div class="toolbar">' +
+    (cfg.search === false ? '' : '<div class="search-mini" style="position:relative">' + icon('search', 16) + '<input type="search" data-q placeholder="' + attr(cfg.searchPlaceholder || 'Search…') + '" value="' + attr(st.q) + '"></div>') + filtersHtml + (cfg.toolbar || '') +
+    (cfg.cards ? '<div class="seg" data-mode><button data-m="table" title="Table">' + icon('list', 16) + '</button><button data-m="cards" title="Cards">' + icon('grid', 16) + '</button></div>' : '') +
+    (cfg.primary ? '<button class="btn" data-primary>' + (cfg.primary.icon ? icon(cfg.primary.icon, 16) : '') + esc(cfg.primary.label) + '</button>' : '') + '</div></div>' + (cfg.above || '') + '<div data-body></div></div>');
+  host.innerHTML = ''; host.appendChild(card);
+  const body = $('[data-body]', card); let data = null, seq = 0;
+  const segBtns = $$('[data-mode] button', card); const syncSeg = () => segBtns.forEach((b) => b.classList.toggle('on', b.dataset.m === st.mode)); syncSeg();
+  async function load(keepScroll){
+    const my = ++seq; body.innerHTML = cfg.skeleton ? cfg.skeleton() : (st.mode === 'cards' ? skelCards(6) : skelTable(5, typeof cfg.columns === 'function' ? 4 : Math.min(5, (cfg.columns || []).length || 4)));
+    const payload = Object.assign({}, cfg.params ? cfg.params() : {}, st.filters, { q: st.q, page: st.page, pageSize: pageSize });
+    if (st.sort) { payload.sort = st.sort; payload.dir = st.dir; }
+    let raw; try { raw = await callApi(cfg.action, payload); } catch (e) { if (my === seq) errorBox(body, e, () => load()); return; }
+    if (my !== seq) return;
+    data = cfg.pick ? cfg.pick(raw) : raw;
+    if (cfg.onData) cfg.onData(data, card, raw);
+    const cnt = $('[data-count]', card); if (cnt) { cnt.textContent = data.total; cnt.classList.toggle('hide', data.total === undefined); }
+    render();
+  }
+  function render(){
+    const rows = data.rows || [];
+    if (!rows.length) { body.innerHTML = emptyHtml(st.q || Object.values(st.filters).some(Boolean) ? 'No matching results' : (cfg.emptyTitle || 'Nothing here yet'), st.q ? 'Try a different search or clear the filters.' : (cfg.emptyText || ''), cfg.emptyIcon || 'inbox', cfg.primary && !st.q ? '<button class="btn mt" data-primary2>' + esc(cfg.primary.label) + '</button>' : ''); const b2 = $('[data-primary2]', body); if (b2) b2.onclick = cfg.primary.onClick; return; }
+    let h;
+    if (st.mode === 'cards' && cfg.cards) h = '<div class="grid g-auto">' + rows.map((r, i) => '<div class="card lift ' + (cfg.onRow ? 'click' : '') + '" data-i="' + i + '" style="padding:18px">' + cfg.cards(r, i) + '</div>').join('') + '</div>';
+    else {
+      const cols = typeof cfg.columns === 'function' ? cfg.columns(data) : cfg.columns;
+      h = '<div class="table-wrap"><table class="' + (cfg.tableClass || ('tbl ' + (cfg.keep ? 'keep' : ''))) + '"><thead><tr>' + (cfg.selectable ? '<th style="width:36px"><input type="checkbox" data-selall aria-label="Select all"></th>' : '') + cols.map((c) => '<th class="' + (c.num ? 'num ' : '') + (c.sort ? 'sortable ' : '') + (c.cls || '') + '"' + (c.sort ? ' data-sort="' + c.sort + '"' : '') + '>' + (c.head || esc(c.label)) + (c.sort && st.sort === c.sort ? (st.dir === 'asc' ? ' ▲' : ' ▼') : '') + '</th>').join('') + '</tr></thead><tbody>' +
+        rows.map((r, i) => '<tr data-i="' + i + '" class="' + (cfg.onRow ? 'clickable' : '') + '">' + (cfg.selectable ? '<td data-label="" onclick="event.stopPropagation()"><input type="checkbox" data-sel="' + attr(r[cfg.idKey]) + '"' + (st.sel[r[cfg.idKey]] ? ' checked' : '') + (cfg.canSelect && !cfg.canSelect(r) ? ' disabled' : '') + '></td>' : '') + cols.map((c) => '<td class="' + (c.num ? 'num ' : '') + (c.cls || '') + '" data-label="' + attr(c.label) + '">' + (c.render ? c.render(r, i) : esc(r[c.key] == null || r[c.key] === '' ? '—' : r[c.key])) + '</td>').join('') + '</tr>').join('') + '</tbody></table></div>';
+    }
+    const from = (data.page - 1) * data.pageSize + 1, to = from + rows.length - 1;
+    h += '<div class="pager"><span class="meta">Showing ' + from + '–' + to + ' of ' + data.total + '</span><div class="row"><button class="btn secondary sm" data-pg="-1" ' + (data.page <= 1 ? 'disabled' : '') + '>' + icon('chevL', 14) + 'Prev</button><span class="meta">Page ' + data.page + ' / ' + data.pages + '</span><button class="btn secondary sm" data-pg="1" ' + (data.page >= data.pages ? 'disabled' : '') + '>Next' + icon('chevR', 14) + '</button></div></div>';
+    body.innerHTML = h; if (cfg.afterRender) cfg.afterRender(body, data);
+    const all = $('[data-selall]', body); if (all) all.checked = rows.every((r) => st.sel[r[cfg.idKey]]);
+  }
+  card.addEventListener('click', (e) => {
+    const pg = e.target.closest('[data-pg]'); if (pg && !pg.disabled) { st.page += +pg.dataset.pg; load(); return; }
+    const th = e.target.closest('[data-sort]'); if (th) { if (st.sort === th.dataset.sort) st.dir = st.dir === 'asc' ? 'desc' : 'asc'; else { st.sort = th.dataset.sort; st.dir = 'asc'; } st.page = 1; load(); return; }
+    const m = e.target.closest('[data-mode] button'); if (m) { st.mode = m.dataset.m; safeStore('focuson.mode.' + key, st.mode); syncSeg(); if (data) render(); return; }
+    if (e.target.closest('[data-primary]')) { cfg.primary.onClick(e.target.closest('[data-primary]')); return; }
+    const act = e.target.closest('[data-act]'); if (act) { const r = data.rows[+act.closest('[data-i]').dataset.i]; e.stopPropagation(); if (cfg.actions && cfg.actions[act.dataset.act]) cfg.actions[act.dataset.act](r, act, api); return; }
+    const sel = e.target.closest('[data-sel]'); if (sel) { st.sel[sel.dataset.sel] = sel.checked; if (!sel.checked) delete st.sel[sel.dataset.sel]; if (cfg.onSelect) cfg.onSelect(api.selected()); const all = $('[data-selall]', body); if (all) all.checked = data.rows.every((r) => st.sel[r[cfg.idKey]]); return; }
+    if (e.target.closest('[data-selall]')) { const on = e.target.closest('[data-selall]').checked; data.rows.forEach((r) => { if (cfg.canSelect && !cfg.canSelect(r)) return; if (on) st.sel[r[cfg.idKey]] = true; else delete st.sel[r[cfg.idKey]]; }); $$('[data-sel]', body).forEach((c) => { if (!c.disabled) c.checked = on; }); if (cfg.onSelect) cfg.onSelect(api.selected()); return; }
+    const row = e.target.closest('[data-i]'); if (row && cfg.onRow && !e.target.closest('a,button,input,select')) cfg.onRow(data.rows[+row.dataset.i], row);
+  });
+  const q = $('[data-q]', card); if (q) q.addEventListener('input', debounce(() => { st.q = q.value.trim(); st.page = 1; load(); }, 300));
+  $$('[data-filter]', card).forEach((s) => { s.onchange = () => { st.filters[s.dataset.filter] = s.value; st.page = 1; load(); }; });
+  api = { el: card, reload: () => load(), data: () => data, state: st, selected: () => Object.keys(st.sel), clearSel() { st.sel = {}; if (data) render(); }, setTitle(t) { $('h3', card).textContent = t; } };
+  load(); return api;
+}
+
+/* ---------- charts (inline SVG) ---------- */
+const PALETTE = ['var(--primary)', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#06B6D4', '#EC4899', '#64748B'];
+function niceMax(v){ if (v <= 0) return 1; const p = Math.pow(10, Math.floor(Math.log10(v))), n = v / p; return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10) * p; }
+function shortNum(n){ return n >= 10000000 ? (n / 10000000).toFixed(1) + 'Cr' : n >= 100000 ? (n / 100000).toFixed(1) + 'L' : n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + 'k' : String(Math.round(n * 10) / 10); }
+function chartFrame(items, h, fmt){
+  const W = 520, H = h || 200, padL = 38, padB = 26, padT = 10, padR = 8, max = niceMax(Math.max.apply(null, items.map((i) => i.value).concat([1])));
+  const iw = W - padL - padR, ih = H - padT - padB; let grid = '';
+  for (let i = 0; i <= 4; i++) { const y = padT + ih - (ih * i / 4); grid += '<line class="grid-line" x1="' + padL + '" x2="' + (W - padR) + '" y1="' + y + '" y2="' + y + '"/><text x="' + (padL - 6) + '" y="' + (y + 3) + '" text-anchor="end">' + (fmt ? fmt(max * i / 4) : shortNum(max * i / 4)) + '</text>'; }
+  return { W, H, padL, padB, padT, padR, max, iw, ih, grid };
+}
+function barChart(items, o){
+  o = o || {}; if (!items.length) return '';
+  const f = chartFrame(items, o.height, o.fmt), bw = f.iw / items.length, step = Math.ceil(items.length / 8); let bars = '', lbls = '';
+  items.forEach((it, i) => { const bh = f.ih * it.value / f.max, x = f.padL + i * bw + bw * 0.18, y = f.padT + f.ih - bh; bars += '<rect class="bar" x="' + x + '" y="' + y + '" width="' + (bw * 0.64) + '" height="' + Math.max(bh, 0) + '" rx="5"><title>' + esc(it.label) + ': ' + (o.fmt ? o.fmt(it.value) : it.value) + '</title></rect>'; if (i % step === 0) lbls += '<text x="' + (x + bw * 0.32) + '" y="' + (f.H - 8) + '" text-anchor="middle">' + esc(it.label) + '</text>'; });
+  return '<svg class="chart" viewBox="0 0 ' + f.W + ' ' + f.H + '" role="img">' + f.grid + bars + lbls + '</svg>';
+}
+function lineChart(items, o){
+  o = o || {}; if (!items.length) return '';
+  const f = chartFrame(items, o.height, o.fmt), n = items.length, stepX = n > 1 ? f.iw / (n - 1) : 0, step = Math.ceil(n / 8);
+  const pts = items.map((it, i) => [f.padL + (n > 1 ? i * stepX : f.iw / 2), f.padT + f.ih - f.ih * it.value / f.max]);
+  const line = pts.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' '), area = line + ' L' + pts[n - 1][0] + ' ' + (f.padT + f.ih) + ' L' + pts[0][0] + ' ' + (f.padT + f.ih) + ' Z';
+  let dots = '', lbls = '';
+  pts.forEach((p, i) => { if (n <= 20) dots += '<circle class="pt" cx="' + p[0] + '" cy="' + p[1] + '" r="3.5"><title>' + esc(items[i].label) + ': ' + (o.fmt ? o.fmt(items[i].value) : items[i].value) + '</title></circle>'; if (i % step === 0) lbls += '<text x="' + p[0] + '" y="' + (f.H - 8) + '" text-anchor="middle">' + esc(items[i].label) + '</text>'; });
+  return '<svg class="chart" viewBox="0 0 ' + f.W + ' ' + f.H + '" role="img"><defs><linearGradient id="areaGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" style="stop-color:var(--primary);stop-opacity:.28"/><stop offset="100%" style="stop-color:var(--primary);stop-opacity:0"/></linearGradient></defs>' + f.grid + '<path class="area" d="' + area + '"/><path class="line" d="' + line + '"/>' + dots + lbls + '</svg>';
+}
+function pieChart(items, o){
+  o = o || {}; const total = items.reduce((a, i) => a + i.value, 0), size = o.size || 150;
+  if (!total) return '<div class="meta center" style="padding:30px 0">No data yet</div>';
+  const R = 52, C = 2 * Math.PI * R; let off = 0, arcs = '';
+  items.forEach((it, i) => { if (!it.value) return; const len = C * it.value / total; arcs += '<circle r="' + R + '" cx="70" cy="70" fill="none" stroke="' + PALETTE[i % PALETTE.length] + '" stroke-width="22" stroke-dasharray="' + len.toFixed(2) + ' ' + (C - len).toFixed(2) + '" stroke-dashoffset="' + (-off).toFixed(2) + '" transform="rotate(-90 70 70)"><title>' + esc(it.label) + ': ' + it.value + '</title></circle>'; off += len; });
+  return '<div class="pie-wrap"><svg viewBox="0 0 140 140" width="' + size + '" height="' + size + '" role="img">' + arcs + '<text x="70" y="68" text-anchor="middle" style="fill:var(--text);font-size:20px;font-weight:800">' + total + '</text><text x="70" y="84" text-anchor="middle" style="fill:var(--muted);font-size:9px">' + esc(o.center || 'total') + '</text></svg><div class="legend" style="flex-direction:column;gap:6px">' + items.map((it, i) => '<span><i style="background:' + PALETTE[i % PALETTE.length] + '"></i>' + esc(it.label) + ' <b style="color:var(--text)">' + it.value + '</b></span>').join('') + '</div></div>';
+}
+
+/* ---------- month calendar (attendance) ---------- */
+const CODES = { P:'Present', L:'Late', H:'Half day', V:'Paid leave', U:'Unpaid leave', S:'Duty travel', W:'Weekly off', O:'Holiday', A:'Absent', X:'Unresolved', F:'Flagged', C:'Comp off' };
+function legendCodes(){ return '<div class="legend-codes">' + Object.keys(CODES).map((c) => '<span><i class="cc ' + c + '" style="width:18px;height:18px;font-size:10px">' + c + '</i>' + CODES[c] + '</span>').join('') + '</div>'; }
+function calendarHtml(att){
+  const first = new Date(att.month + '-01T00:00:00Z').getUTCDay(), today = todayStr();
+  let h = '<div class="cal">' + DOW.map((d) => '<div class="dow">' + d[0] + '</div>').join('');
+  for (let i = 0; i < first; i++) h += '<div class="day blank"></div>';
+  att.days.forEach((d) => { const n = +d.date.slice(8); h += '<div class="day ' + (d.date === today ? 'today' : '') + '" data-date="' + d.date + '"><span>' + n + '</span>' + (d.code === '-' ? '<span class="cc dash">·</span>' : '<span class="cc ' + d.code + '" title="' + (CODES[d.code] || '') + '">' + d.code + '</span>') + '</div>'; });
+  return h + '</div>' + legendCodes() + '<div data-day-detail class="mt"></div>';
+}
+function wireCalendar(root, att){
+  root.addEventListener('click', (e) => {
+    const d = e.target.closest('.day[data-date]'); if (!d) return;
+    $$('.day.sel', root).forEach((x) => x.classList.remove('sel')); d.classList.add('sel');
+    const date = d.dataset.date, info = att.days.find((x) => x.date === date), p = att.punches[date], hol = att.holidays.find((x) => x.date === date), box = $('[data-day-detail]', root);
+    box.innerHTML = '<div class="card flat" style="padding:14px"><div class="row spread"><b>' + fmtDate(date) + '</b>' + (info && info.code !== '-' ? '<span class="cc ' + info.code + '" style="width:auto;padding:0 8px">' + CODES[info.code] + '</span>' : '') + '</div>' +
+      (hol ? '<div class="meta mt-s">Holiday: ' + esc(hol.name) + '</div>' : '') + (p ? '<dl class="kv mt-s"><dt>Punch in</dt><dd>' + (p.inTime || '—') + '</dd><dt>Punch out</dt><dd>' + (p.outTime || '—') + '</dd><dt>Worked</dt><dd>' + fmtMins(p.workMinutes) + '</dd>' + (p.flag ? '<dt>Flag</dt><dd>' + esc(p.flagReason || '') + '</dd>' : '') + '</dl>' : '<div class="meta mt-s">No punch recorded.</div>') + '</div>';
+  });
+}
+
+/* =====================================================================
+   SHELL, AUTH, ROUTER
+   ===================================================================== */
+const VIEWS = {};
+function can(k){ return !!(S.boot && S.boot.perms && S.boot.perms[k]); }
+function canAny(k){ return Array.isArray(k) ? k.some(can) : can(k); }
+function appName(){ return 'FocusOn HRMS 2.0'; }
+function logoMark(src, name){ return '<div class="logo-mark">' + (src ? '<img alt="" src="' + attr(src) + '">' : esc(initials(name || 'F').slice(0,1) || 'F')) + '</div>'; }
+function pageHead(title, sub, actions){ return '<div class="page-head"><div><h1>' + esc(title) + '</h1>' + (sub ? '<p>' + esc(sub) + '</p>' : '') + '</div>' + (actions ? '<div class="row">' + actions + '</div>' : '') + '</div>'; }
+function go(path){ const h = '#/' + path; if (location.hash === h) route(); else location.hash = h; }
+
+var NAV = {
+  super: [
+    { id: 'dashboard', label: 'Dashboard', icon: 'grid' },
+    { id: 'users', label: 'Users & Access', icon: 'shield', perm: 'user.view' },
+    { id: 'roles', label: 'Roles & Permissions', icon: 'sliders', perm: 'role.define' },
+    { id: 'org', label: 'Organization', icon: 'building', perm: 'org.view' },
+    { id: 'employees', label: 'Employees', icon: 'users', perm: 'employee.view' },
+    { id: 'attendance', label: 'Attendance', icon: 'calendar', perm: 'attendance.view' },
+    { id: 'leave', label: 'Leave', icon: 'leaf', perm: 'leave.view' },
+    { id: 'payroll', label: 'Payroll', icon: 'wallet', perm: 'payroll.view' },
+    { id: 'reports', label: 'Reports', icon: 'chart', perm: 'report.employee' },
+    { id: 'system', label: 'System', icon: 'sliders', perm: 'system.health' },
+    { id: 'backup', label: 'Backup & Restore', icon: 'save', perm: 'backup.run' },
+    { id: 'audit', label: 'Audit Log', icon: 'shield', perm: 'audit.view' }
+  ],
+  admin: [
+    { id: 'dashboard', label: 'Dashboard', icon: 'grid' },
+    { id: 'employees', label: 'Employees', icon: 'users', perm: 'employee.view' },
+    { id: 'attendance', label: 'Attendance', icon: 'calendar', perm: 'attendance.view' },
+    { id: 'leave', label: 'Leave', icon: 'leaf', perm: 'leave.view' },
+    { id: 'documents', label: 'Documents', icon: 'file', perm: 'doc.view' },
+    { id: 'reports', label: 'Reports', icon: 'chart', perm: 'report.employee' }
+  ],
+  hr: [
+    { id: 'dashboard', label: 'Dashboard', icon: 'grid' },
+    { id: 'employees', label: 'Employees', icon: 'users', perm: 'employee.view' },
+    { id: 'attendance', label: 'Attendance', icon: 'calendar', perm: 'attendance.view' },
+    { id: 'leave', label: 'Leave', icon: 'leaf', perm: 'leave.view' },
+    { id: 'payroll', label: 'Payroll (prepare)', icon: 'wallet', perm: 'payroll.prepare' },
+    { id: 'documents', label: 'Documents', icon: 'file', perm: 'doc.view' },
+    { id: 'recruitment', label: 'Recruitment', icon: 'briefcase', perm: 'recruit.view' },
+    { id: 'onboarding', label: 'Onboarding', icon: 'users', perm: 'onboarding.manage' },
+    { id: 'performance', label: 'Performance', icon: 'chart', perm: 'perf.view' },
+    { id: 'exit', label: 'Exit & F&F', icon: 'log_out', perm: 'exit.view' },
+    { id: 'reports', label: 'Reports', icon: 'chart', perm: 'report.employee' }
+  ],
+  accounts: [
+    { id: 'dashboard', label: 'Dashboard', icon: 'grid' },
+    { id: 'payroll', label: 'Payroll', icon: 'wallet', perm: 'payroll.verify' },
+    { id: 'expenses', label: 'Expenses', icon: 'receipt', perm: 'expense.view' },
+    { id: 'loans', label: 'Loans & Advances', icon: 'wallet', perm: 'loan.manage' },
+    { id: 'reports', label: 'Reports', icon: 'chart', perm: 'report.payroll' }
+  ],
+  exec: [
+    { id: 'dashboard', label: 'Dashboard', icon: 'grid' },
+    { id: 'reports', label: 'Reports', icon: 'chart', perm: 'report.employee' },
+    { id: 'leave', label: 'Leave Approvals', icon: 'leaf', perm: 'leave.approve' },
+    { id: 'attendance', label: 'Attendance', icon: 'calendar', perm: 'attendance.view' }
+  ],
+  manager: [
+    { id: 'dashboard', label: 'Dashboard', icon: 'grid' },
+    { id: 'team', label: 'Team', icon: 'users', perm: 'attendance.view' },
+    { id: 'leave', label: 'Leave', icon: 'leaf', perm: 'leave.approve' },
+    { id: 'expenses', label: 'Expenses', icon: 'receipt', perm: 'expense.view' },
+    { id: 'reports', label: 'Reports', icon: 'chart', perm: 'report.employee' }
+  ],
+  supervisor: [
+    { id: 'dashboard', label: 'Dashboard', icon: 'grid' },
+    { id: 'attendance', label: 'Attendance', icon: 'calendar', perm: 'attendance.markothers' },
+    { id: 'leave', label: 'Leave', icon: 'leaf', perm: 'leave.approve' },
+    { id: 'expenses', label: 'Expenses', icon: 'receipt', perm: 'expense.view' }
+  ],
+  employee: [
+    { id: 'dashboard', label: 'Home', icon: 'home' },
+    { id: 'attendance', label: 'Hazri', icon: 'calendar' },
+    { id: 'leave', label: 'Chhutti', icon: 'leaf' },
+    { id: 'payslip', label: 'Salary Slip', icon: 'wallet' },
+    { id: 'profile', label: 'Meri Jaankari', icon: 'user' },
+    { id: 'helpdesk', label: 'Support', icon: 'lifebuoy' }
+  ]
+};
+function panelFor(user){
+  if (_isSA(user)) return 'super';
+  return user.panel || 'admin';
+}
+function _isSA(u){ return !!(u && u.role === 'SUPER_ADMIN'); }
+function renderShell(){
+  const b = S.boot, panel = S.panel = panelFor(b.user), items = NAV[panel].filter((n) => !n.perm || can(n.perm));
+  const isEmp = panel === 'employee';
+  const name = b.user.name || b.user.loginId;
+  const brand = b.company || {};
+  $('#app').innerHTML = '<div class="app' + (S.sidebarCollapsed ? ' collapsed' : '') + (isEmp ? ' has-bar' : '') + '">' +
+    '<aside class="sidebar" id="sidebar"><div class="brand">' + logoMark(brand.logo, brand.name || appName()) + '<div class="brand-text"><div class="brand-name ellipsis" style="max-width:170px">' + esc(brand.name || appName()) + '</div><div class="brand-sub">' + (panel === 'super' ? 'Super Admin console' : 'FocusOn HRMS') + '</div></div></div>' +
+    '<nav class="nav" id="nav">' + items.map((n) => '<button class="nav-item" data-nav="' + n.id + '" title="' + attr(n.label) + '">' + icon(n.icon, 20) + '<span class="nav-label">' + esc(n.label) + '</span><span data-badge="' + n.id + '"></span></button>').join('') + '</nav>' +
+    '<div class="sidebar-foot"><button class="nav-item" id="logoutBtn" title="Sign out">' + icon('logout', 20) + '<span class="nav-label">Sign out</span></button></div></aside>' +
+    '<div class="scrim" id="scrim"></div>' +
+    '<div class="main"><header class="header"><button class="icon-btn" id="menuBtn" aria-label="Menu">' + icon('menu', 22) + '</button>' +
+    '<div class="h-logo">' + logoMark(brand.logo, brand.name || appName()) + '<b class="ellipsis" style="max-width:120px">' + esc(brand.name || appName()) + '</b></div>' +
+    '<div class="search"><div style="position:relative;flex:1;max-width:520px;margin:0 auto">' + icon('search', 18) + '<input id="gsearch" type="search" placeholder="Search employees…" autocomplete="off" aria-label="Search"><div class="dropdown hide" id="gsDrop"></div></div></div>' +
+    '<div class="row" style="gap:4px;margin-left:auto">' +
+    '<button class="icon-btn" id="themeBtn" aria-label="Toggle dark mode"></button>' +
+    '<div style="position:relative"><button class="icon-btn" id="bellBtn" aria-label="Notifications">' + icon('bell', 20) + '<span class="dot hide" id="bellDot">0</span></button><div class="dropdown hide" id="bellDrop" style="right:0;width:min(340px,92vw)"></div></div>' +
+    '<div style="position:relative"><button class="profile-btn" id="profBtn">' + avatarHtml(name, '', b.user.photoFileId || '') + '<div style="text-align:left"><div style="font-weight:600;font-size:13px;line-height:1.2" class="ellipsis">' + esc(name) + '</div><div class="meta">' + esc((panel === 'super' ? 'Super Admin' : (b.user.role || ''))) + '</div></div></button><div class="dropdown hide" id="profDrop" style="right:0;width:230px"></div></div>' +
+    '</div></header><main class="content"><div class="view" id="view"></div></main></div>' +
+    (isEmp ? '<div class="bottom-bar" id="bottomBar"><button class="btn secondary" data-bar="leave">' + icon('leaf', 20) + ' Leave</button><button class="btn success" data-bar="in">' + icon('login', 20) + ' Punch In</button><button class="btn danger" data-bar="out">' + icon('logout', 20) + ' Punch Out</button></div>' : '') + '</div>';
+  setTheme(document.documentElement.getAttribute('data-theme') || 'light');
+  wireShell(); loadPhoto('.profile-btn .avatar'); updateBell(b.counts ? b.counts.notifications : 0); startPolling(); route();
+}
+function loadPhoto(sel){
+  $$(sel || '.avatar[data-ph]').forEach((el) => {
+    const id = el.dataset.ph; if (!id || el.dataset.done) return; el.dataset.done = '1';
+    const cached = S.cache['photo_' + id]; const apply = (src) => { if (src && el.isConnected) el.innerHTML = '<img alt="" src="' + attr(src) + '">'; };
+    if (cached !== undefined) return apply(cached);
+    callApi('file.get', { fileId: id }, { silent: true }).then((f) => { const src = /^image\//.test(f.mime) ? 'data:' + f.mime + ';base64,' + f.data : ''; S.cache['photo_' + id] = src; apply(src); }).catch(() => S.cache['photo_' + id] = '');
+  });
+}
+function closeDropdowns(except){ ['gsDrop','bellDrop','profDrop'].forEach((id) => { const d = $('#' + id); if (d && d !== except) d.classList.add('hide'); }); }
+function wireShell(){
+  const sb = $('#sidebar'), scrim = $('#scrim'), app = $('.app');
+  const openSb = (on) => { sb.classList.toggle('open', on); scrim.classList.toggle('show', on); };
+  $('#menuBtn').onclick = () => { if (window.innerWidth <= 1024) openSb(!sb.classList.contains('open')); else { S.sidebarCollapsed = !S.sidebarCollapsed; safeStore('focuson.collapsed', S.sidebarCollapsed ? '1' : '0'); app.classList.toggle('collapsed', S.sidebarCollapsed); } };
+  scrim.onclick = () => openSb(false);
+  $('#nav').onclick = (e) => { const n = e.target.closest('[data-nav]'); if (n) { openSb(false); go(panelFor(S.boot.user) + '/' + n.dataset.nav); } };
+  $('#logoutBtn').onclick = logout;
+  $('#themeBtn').onclick = toggleTheme;
+  const bb = $('#bottomBar'); if (bb) bb.onclick = (e) => { const b = e.target.closest('[data-bar]'); if (!b) return; if (b.dataset.bar === 'leave') openLeaveModal(); else doPunch(b.dataset.bar, b); };
+  $('#bellBtn').onclick = (e) => { e.stopPropagation(); const d = $('#bellDrop'); closeDropdowns(d); d.classList.toggle('hide'); if (!d.classList.contains('hide')) loadNotifs(); };
+  $('#profBtn').onclick = (e) => { e.stopPropagation(); const d = $('#profDrop'); closeDropdowns(d);
+    d.innerHTML = '<div style="padding:8px 10px"><b>' + esc(S.boot.user.name || S.boot.user.loginId) + '</b><div class="meta">' + esc(S.boot.user.loginId) + '</div><div class="mt-s">' + badge(S.panel === 'super' ? 'Super Admin' : (S.boot.user.role || ''), 'primary') + '</div></div><hr style="border:0;border-top:1px solid var(--border);margin:6px 0"><button class="dd-item" data-p="pw">' + icon('key', 18) + ' Change password</button><button class="dd-item" data-p="theme">' + icon('moon', 18) + ' Toggle dark mode</button><button class="dd-item" data-p="out">' + icon('logout', 18) + ' Sign out</button>';
+    d.classList.toggle('hide'); d.onclick = (ev) => { const p = ev.target.closest('[data-p]'); if (!p) return; d.classList.add('hide'); if (p.dataset.p === 'pw') changePasswordModal(); else if (p.dataset.p === 'theme') toggleTheme(); else logout(); };
+  };
+  const gs = $('#gsearch'); if (gs) { gs.addEventListener('input', debounce(async () => { const q = gs.value.trim(); if (q.length < 2) { $('#gsDrop').classList.add('hide'); return; } try { const r = await callApi('search.global', { q }, { silent: true }); $('#gsDrop').classList.remove('hide'); $('#gsDrop').innerHTML = (r.employees || []).map((x) => '<button class="dd-item" data-go="' + x.empId + '">' + avatarHtml(x.name, 'sm') + '<div><div style="font-weight:600">' + esc(x.name) + '</div><div class="meta">' + esc(x.empCode || '') + ' · ' + esc(x.designationId || 'Employee') + '</div></div></button>').join('') || '<div class="meta" style="padding:14px">No results.</div>'; } catch (e) { $('#gsDrop').classList.add('hide'); } }, 280)); }
+  $('#gsDrop').addEventListener('click', (e) => { const g = e.target.closest('[data-go]'); if (g) { $('#gsDrop').classList.add('hide'); gs.value = ''; go('employee/' + g.dataset.go); } });
+}
+document.addEventListener('click', (e) => { if (!e.target.closest('.dropdown') && !e.target.closest('.search')) closeDropdowns(); });
+
+/* ---------- notifications ---------- */
+function updateBell(n){ const d = $('#bellDot'); if (!d) return; S.unread = n || 0; d.textContent = n > 99 ? '99+' : n; d.classList.toggle('hide', !n); }
+function ago(iso){ if (!iso) return ''; const t = new Date(iso).getTime(), m = Math.max(0, Math.round((Date.now() - t) / 60000)); if (isNaN(t)) return fmtDate(iso); if (m < 1) return 'just now'; if (m < 60) return m + ' min ago'; if (m < 1440) return Math.floor(m / 60) + ' h ago'; if (m < 10080) return Math.floor(m / 1440) + ' d ago'; return fmtDate(iso); }
+async function loadNotifs(){
+  const d = $('#bellDrop'); d.innerHTML = '<div style="padding:12px">' + skelLines(4) + '</div>';
+  try {
+    const r = await callApi('notif.list', {}, { silent: true }); updateBell(r.unread);
+    d.innerHTML = '<div class="row spread" style="padding:6px 10px"><b>Notifications</b>' + (r.unread ? '<button class="btn ghost sm" data-all>Mark all read</button>' : '') + '</div>' +
+      (r.items.length ? r.items.map((n) => '<div class="dd-item" style="align-items:flex-start;cursor:default">' + (n.isRead ? '' : '<span class="pulse" style="margin-top:6px"></span>') + '<div class="grow"><div style="font-size:13.5px' + (n.isRead ? ';color:var(--muted)' : ';font-weight:600') + '">' + esc(n.message) + '</div><div class="meta">' + ago(n.createdAt) + '</div></div></div>').join('') : emptyHtml('All caught up', 'No notifications yet.', 'bell'));
+    const all = $('[data-all]', d); if (all) all.onclick = async () => { await callApi('notif.read', { all: true }); updateBell(0); loadNotifs(); };
+  } catch (e) { d.innerHTML = '<div class="meta" style="padding:14px">Could not load notifications.</div>'; }
+}
+let pollTimer = null, pollN = 0;
+function startPolling(){
+  clearInterval(pollTimer); pollN = 0;
+  pollTimer = setInterval(async () => {
+    if (document.hidden || !S.token || !S.boot) return;
+    try { const r = await callApi('notif.list', {}, { silent: true }); updateBell(r.unread); if (++pollN % 6 === 0) await refreshCounts(); } catch (e) { /* silent */ }
+  }, 120000);
+}
+async function refreshCounts(){
+  if (!S.token) return;
+  try { const b = await callApi('boot', {}, { silent: true }); if (b && b.loggedIn) { S.boot.counts = b.counts; updateBell(b.counts.notifications); } } catch (e) { /* silent */ }
+}
+
+/* ---------- auth screens ---------- */
+function setTheme(t){ document.documentElement.setAttribute('data-theme', t); safeStore('focuson.theme', t); const b = $('#themeBtn'); if (b) b.innerHTML = icon(t === 'dark' ? 'sun' : 'moon', 19); }
+function toggleTheme(){ setTheme(document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark'); }
+function applyBrand(hex){ /* brand color applied via settings later */ }
+function authShell(inner){
+  $('#app').innerHTML = '<div class="auth-wrap"><div class="auth-split">' +
+    '<div class="auth-art"><div style="padding:40px;color:#fff"><div style="font-size:40px;margin-bottom:12px">' + icon('wallet', 40) + '</div><h2>FocusOn HRMS 2.0</h2><p class="mt-s" style="opacity:.9">Attendance • Leave • Payroll • People — in one place.</p>' +
+    '<div class="mt" style="display:flex;gap:10px;flex-wrap:wrap">' +
+    '<div style="display:flex;align-items:center;gap:8px">' + icon('calendar', 18) + '<span style="opacity:.95">Geo-fenced check-in</span></div>' +
+    '<div style="display:flex;align-items:center;gap:8px">' + icon('leaf', 18) + '<span style="opacity:.95">Leave &amp; balances</span></div>' +
+    '<div style="display:flex;align-items:center;gap:8px">' + icon('wallet', 18) + '<span style="opacity:.95">Payslips &amp; payroll</span></div>' +
+    '<div style="display:flex;align-items:center;gap:8px">' + icon('shield', 18) + '<span style="opacity:.95">Role-based access</span></div>' +
+    '</div></div></div>' +
+    '<div class="card auth-card view" style="max-width:400px;margin:auto;padding:32px">' + inner + '</div>' +
+    '</div></div><div style="position:fixed;top:12px;right:12px"><button class="icon-btn" id="themeBtn" aria-label="Toggle dark mode"></button></div>';
+  $('#themeBtn').onclick = toggleTheme; setTheme(document.documentElement.getAttribute('data-theme') || 'light');
+}
+function renderAuth(mode, note){
+  S.boot = null; S.panel = ''; S.view = '';
+  const isSuper = mode === 'super';
+  const fields = [
+    { name: 'loginId', label: isSuper ? 'Employee Code / Email / Mobile' : 'Employee Code / Email / Mobile', type: 'text', required: true, placeholder: 'FO-0001 or email or mobile', full: true, autocomplete: 'username' },
+    { name: 'password', label: 'Password', type: 'password', required: true, placeholder: 'Your password', full: true, autocomplete: 'current-password' }
+  ];
+  authShell('<h1>' + (isSuper ? 'Super Admin sign in' : 'Welcome back') + '</h1><p class="muted mt-s">Sign in to FocusOn HRMS</p>' +
+    (note ? '<div class="alert ' + (note.type || 'ok') + ' mt">' + icon(note.type === 'warn' ? 'alert' : 'checkcircle', 18) + '<div>' + esc(note.text) + '</div></div>' : '') +
+    '<div class="mt" id="loginForm">' + formHtml(fields) + '</div><div id="loginErr"></div>' +
+    '<button class="btn lg block mt" id="loginBtn">' + icon('login', 18) + ' Sign in</button>' +
+    '<div class="auth-links mt">' +
+    '<a href="#" data-a="forgot">Forgot password?</a>' +
+    (isSuper ? '<a href="#" data-m="company">Employee sign in</a>' : '<a href="#" data-m="super">Super Admin</a>') +
+    '</div>' +
+    (isSuper ? '' : '<div class="meta center mt"><a href="#" data-m="super">Super Admin sign in</a></div>'));
+  const root = $('#loginForm'); wireForm(root);
+  const form = $('form', root); const submit = async () => {
+    const d = readForm(root, fields); if (!d) return; $('#loginErr').innerHTML = '';
+    try { const res = await callApi('auth.login', { mode: isSuper ? 'super' : 'company', loginId: d.loginId, password: d.password }, { btn: $('#loginBtn'), inline: true }); onLoggedIn(res); }
+    catch (e) { if (e.field) setFieldError(root, e.field, e.message); else $('#loginErr').innerHTML = '<div class="alert danger mt">' + icon('alert', 18) + '<div>' + esc(e.message) + '</div></div>'; }
+  };
+  form.addEventListener('submit', (e) => { e.preventDefault(); submit(); }); $('#loginBtn').onclick = submit;
+  $$('[data-m]').forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); renderAuth(a.dataset.m); }));
+  $$('[data-a]').forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); renderForgot(); }));
+}
+function renderForgot(){
+  const fields = [{ name: 'loginId', label: 'Employee Code / Email / Mobile', type: 'text', required: true, full: true }];
+  authShell('<h1>Forgot password</h1><p class="muted mt-s">An OTP will be sent to your registered email.</p>' +
+    '<div class="mt" id="forgotForm">' + formHtml(fields) + '</div><button class="btn lg block mt" id="forgotBtn">Send OTP</button>' +
+    '<div class="auth-links mt"><a href="#" data-m="company">← Back to sign in</a></div>');
+  const root = $('#forgotForm'); wireForm(root);
+  $('#forgotBtn').onclick = async () => {
+    const d = readForm(root, fields); if (!d) return;
+    try { await callApi('auth.forgot', { loginId: d.loginId }); renderAuth('company', { type: 'ok', text: 'OTP sent to your registered email.' }); }
+    catch (e) { toast(e.message, 'error'); }
+  };
+  $('#forgotForm').addEventListener('submit', (e) => { e.preventDefault(); $('#forgotBtn').click(); });
+  $$('[data-m]').forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); renderAuth(a.dataset.m); }));
+}
+function changePasswordModal(){
+  formModal({ title: 'Change password', fields: [
+    { name: 'oldPassword', label: 'Current password', type: 'password', required: true },
+    { name: 'newPassword', label: 'New password', type: 'password', required: true, minLength: SEC ? SEC.passwordMinLength : 8 },
+    { name: 'confirm', label: 'Confirm new password', type: 'password', required: true }
+  ], onSubmit: async (data) => {
+    if (data.newPassword !== data.confirm) throw { field: 'confirm', message: 'Passwords do not match.' };
+    const res = await callApi('auth.changepassword', { token: S.token, oldPassword: data.oldPassword, newPassword: data.newPassword });
+    toast('Password changed.', 'success');
+  }});
+}
+
+/* ---------- login result ---------- */
+async function onLoggedIn(res){
+  S.token = res.token; safeStore('focuson.token', S.token);
+  const b = await callApi('boot', { token: S.token });
+  if (!b || !b.loggedIn) { sessionLost(); return; }
+  S.boot = b; S.panel = panelFor(b.user);
+  renderShell();
+}
+function logout(){
+  callApi('auth.logout', { token: S.token }).then(() => { sessionLost(); }, () => { sessionLost(); });
+}
+
+/* ---------- router ---------- */
+function route(){
+  const hash = location.hash.slice(2) || (panelFor(S.boot.user) === 'employee' ? 'employee/dashboard' : panelFor(S.boot.user) + '/dashboard');
+  const parts = hash.split('/');
+  const panel = parts[0], view = parts[1], id = parts[2];
+  if (!NAV[panel]) { $('#view').innerHTML = '<div class="card">' + emptyHtml('Invalid section', 'Unknown panel: ' + esc(panel), 'alert') + '</div>'; return; }
+  S.panel = panel; S.view = view; S.params = parts.slice(2);
+  // highlight nav
+  $$('[data-nav]', $('#nav')).forEach((el) => el.classList.toggle('active', el.dataset.nav === view));
+  // dispatch
+  const vname = (panel === 'employee' ? 'self_' : (panel === 'super' ? 'admin_' : (panel === 'hr' ? 'hr_' : (panel === 'accounts' ? 'payroll_' : 'view_')))) + view;
+  const fn = window[vname];
+  if (typeof fn === 'function') { $('#view').innerHTML = '<div class="view">' + skelCards(3) + '</div>'; fn(id || ''); }
+  else { $('#view').innerHTML = '<div class="card">' + emptyHtml('Under construction', 'The view "' + esc(view) + '" is being built.', 'alert') + '</div>'; }
+}
+window.addEventListener('hashchange', route);
+
+/* ---------- init ---------- */
+function INIT(){
+  if (S.token) {
+    callApi('boot', { token: S.token }).then((b) => { if (b && b.loggedIn) { S.boot = b; S.panel = panelFor(b.user); renderShell(); } else { renderAuth('company'); } }, () => { renderAuth('company'); });
+  } else { renderAuth('company'); }
+}
+</script>

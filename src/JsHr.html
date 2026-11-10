@@ -1,0 +1,270 @@
+<script>
+/* =====================================================================
+   FocusOn HRMS 2.0 — HR Views (JsHr.html)
+   ===================================================================== */
+
+async function hr_dashboard(id){
+  const host = $('#view');
+  host.innerHTML = '<div class="view">' + pageHead('HR Dashboard', 'People, attendance and payroll overview.') +
+    '<div class="grid g4" id="hrDashStats">' + skelStats(4) + '</div>' +
+    '<div class="grid g-main" id="hrDashBody"></div></div>';
+  try {
+    const empCount = await callApi('org.employee.list', {});
+    const att = await callApi('att.liveboard', { date: todayStr() });
+    const pend = await callApi('wf.listrequests', { mode: 'inbox' });
+    const stats = host.querySelector('#hrDashStats');
+    stats.innerHTML = '';
+    const rows = empCount.data.rows || [];
+    const present = (att.data.rows || []).filter((r) => r.code === 'P').length;
+    const absent = (att.data.rows || []).filter((r) => r.code === 'A').length;
+    const pendCount = (pend.data.rows || []).length;
+    const cards = [
+      { icon: 'users', label: 'Employees', value: rows.length, color: 'blue' },
+      { icon: 'calendar', label: 'Present Today', value: present, color: 'green' },
+      { icon: 'calendar', label: 'Absent Today', value: absent, color: 'red' },
+      { icon: 'shield', label: 'Pending Approvals', value: pendCount, color: 'amber', click: 'hr/leave' }
+    ];
+    cards.forEach((c) => { stats.insertAdjacentHTML('beforeend', statCard(c)); });
+    $$('.stat.click', stats).forEach((el) => el.onclick = () => go(el.dataset.go));
+    // pending approvals list
+    const body = host.querySelector('#hrDashBody');
+    body.innerHTML = '<div class="card"><div class="card-head"><h3>Pending Approvals</h3></div><div class="mt" id="hrDashPend" style="padding:16px">' + skelTable(3, 4) + '</div></div>';
+    const pbody = $('#hrDashPend');
+    if (pend.data.rows.length) {
+      pbody.innerHTML = '<table class="tbl"><thead><tr><th>Request</th><th>Employee</th><th>Type</th><th>Action</th></tr></thead><tbody>' +
+        pend.data.rows.slice(0, 8).map((r) => '<tr><td>' + esc(r.type) + '</td><td>' + esc(r.empName) + ' (' + esc(r.empCode) + ')</td><td>' + esc(r.data.typeName || '') + '</td><td><button class="btn sm" onclick="go(\'hr/wf/' + r.reqId + '\')">' + icon('arrowRight', 14) + ' Open</button></td></tr>').join('') + '</tbody></table>';
+    } else pbody.innerHTML = emptyHtml('No pending approvals', 'Everything is up to date.', 'inbox');
+  } catch (e) { errorBox(host, e); }
+}
+
+// ---------- Employees ----------
+
+async function hr_employees(id){
+  const host = $('#view');
+  host.innerHTML = '<div class="view">' + pageHead('Employees', 'Employee directory.') +
+    '<div class="mt"><div class="row spread" style="gap:8px"><button class="btn" id="empAdd">' + icon('plus', 16) + ' Add Employee</button><button class="btn" id="empImport">' + icon('upload', 16) + ' Import</button><button class="btn" id="empExport">' + icon('download', 16) + ' Export</button></div></div>' +
+    '<div id="empList" class="mt"></div></div>';
+  $('#empAdd').onclick = () => openEmployeeModal();
+  $('#empImport').onclick = () => toast('Import: paste CSV in the Add dialog (coming soon).', 'info');
+  $('#empExport').onclick = async () => {
+    try { const res = await callApi('org.employee.export', {}); downloadB64(res.data.fileName, 'text/csv', res.data.csv); }
+    catch (e) { toast(e.message, 'error'); }
+  };
+  mountList($('#empList'), {
+    id: 'employees', action: 'org.employee.list', title: 'Employee Directory',
+    primary: { label: 'Add Employee', icon: 'plus', onClick: openEmployeeModal },
+    columns: [
+      { label: 'Code', key: 'empCode' },
+      { label: 'Name', key: 'name', render: (r) => avatarHtml(r.name, 'sm') + ' ' + esc(r.name) },
+      { label: 'Department', key: 'departmentId' },
+      { label: 'Branch', key: 'branchId' },
+      { label: 'Status', key: 'status', render: (r) => badge(r.status) },
+      { label: '', key: 'empId', num: true, render: (r) => '<button class="btn sm" data-act="view" data-i="' + r.$$idx + '">' + icon('eye', 14) + '</button>' }
+    ],
+    actions: { view: (r) => { r.$$idx = r.$$idx || 0; viewEmployee(r); } },
+    params: () => ({ token: S.token })
+  });
+  // patch rows with index for actions
+  const orig = mountList;
+}
+function viewEmployee(emp){
+  formModal({ title: 'Employee — ' + esc(emp.name), size: 'lg',
+    fields: [
+      { name: 'empCode', label: 'Employee Code', readonly: true },
+      { name: 'name', label: 'Full Name' },
+      { name: 'departmentId', label: 'Department', type: 'text' },
+      { name: 'branchId', label: 'Branch', type: 'text' },
+      { name: 'designationId', label: 'Designation', type: 'text' },
+      { name: 'status', label: 'Status', type: 'select', options: [{ v: 'Active', l: 'Active' }, { v: 'Notice', l: 'Notice' }, { v: 'Inactive', l: 'Inactive' }, { v: 'Exited', l: 'Exited' }] },
+      { name: 'phone', label: 'Phone', type: 'tel' },
+      { name: 'email', label: 'Email', type: 'email' },
+      { name: 'salary', label: 'Salary (masked)', readonly: true }
+    ], values: emp, onSubmit: async (data) => {
+      try { await callApi('org.employee.save', { token: S.token, empId: emp.empId, name: data.name, departmentId: data.departmentId, branchId: data.branchId, designationId: data.designationId, status: data.status, phone: data.phone, email: data.email }); toast('Employee updated.', 'success'); } catch (e) { toast(e.message, 'error'); }
+    }});
+}
+function openEmployeeModal(emp){
+  formModal({ title: emp ? 'Edit Employee' : 'Add Employee', fields: [
+    { name: 'empCode', label: 'Employee Code', required: true, upper: true },
+    { name: 'name', label: 'Full Name', required: true },
+    { name: 'gender', label: 'Gender', type: 'select', options: [{ v: 'Male', l: 'Male' }, { v: 'Female', l: 'Female' }, { v: 'Other', l: 'Other' }] },
+    { name: 'phone', label: 'Phone', type: 'tel' },
+    { name: 'email', label: 'Email', type: 'email' },
+    { name: 'departmentId', label: 'Department', type: 'text' },
+    { name: 'branchId', label: 'Branch', type: 'text' },
+    { name: 'designationId', label: 'Designation', type: 'text' },
+    { name: 'doj', label: 'Date of Joining', type: 'date' },
+    { name: 'employmentType', label: 'Employment Type', type: 'select', options: [{ v: 'Full-time', l: 'Full-time' }, { v: 'Part-time', l: 'Part-time' }, { v: 'Contract', l: 'Contract' }] },
+    { name: 'status', label: 'Status', type: 'select', options: [{ v: 'Active', l: 'Active' }] },
+    { name: 'loginId', label: 'Login ID (code/mobile/email)' },
+    { name: 'passwordTemp', label: 'Temporary Password', type: 'password' }
+  ], values: emp || {}, onSubmit: async (data) => {
+    try { await callApi('org.employee.save', Object.assign({ token: S.token }, emp ? { empId: emp.empId } : {}, data)); toast(emp ? 'Employee updated.' : 'Employee created.', 'success'); hr_employees(); } catch (e) { toast(e.message, 'error'); }
+  }});
+}
+
+// ---------- Attendance (HR) ----------
+
+async function hr_attendance(id){
+  const host = $('#view');
+  host.innerHTML = '<div class="view">' + pageHead('Attendance', 'Today\'s attendance and exceptions.') +
+    '<div class="grid g2"><div id="hrAttLive" class="card"></div><div id="hrAttExc" class="card"></div></div></div>';
+  try {
+    const att = await callApi('att.liveboard', { date: todayStr() });
+    const live = $('#hrAttLive'); live.innerHTML = '<div class="card-head"><h3>Today — ' + fmtDate(todayStr()) + '</h3></div><div class="mt" style="padding:16px">' +
+      '<table class="tbl"><thead><tr><th>Employee</th><th>Code</th><th>In</th><th>Out</th><th>Worked</th><th>Flag</th></tr></thead><tbody>' +
+      (att.data.rows || []).map((r) => '<tr><td>' + esc(r.name) + ' (' + esc(r.empCode) + ')</td><td>' + badge(r.code) + '</td><td>' + (r.inTime || '—') + '</td><td>' + (r.outTime || '—') + '</td><td>' + fmtMins(r.workMins) + '</td><td>' + (r.flag ? badge('Flagged') : '—') + '</td></tr>').join('') + '</tbody></table>' +
+      '</div>';
+    const exc = $('#hrAttExc'); exc.innerHTML = '<div class="card-head"><h3>Flagged / Exceptions</h3></div><div class="mt" style="padding:16px">' +
+      ((att.data.rows || []).filter((r) => r.flag).length ? '<table class="tbl"><thead><tr><th>Employee</th><th>Reason</th><th>Action</th></tr></thead><tbody>' +
+      (att.data.rows || []).filter((r) => r.flag).map((r) => '<tr><td>' + esc(r.name) + '</td><td>' + esc(r.flagReason) + '</td><td><button class="btn sm" onclick="go(\'hr/wf/attreg\')">' + icon('edit', 14) + ' Regularize</button></td></tr>').join('') + '</tbody></table>' : emptyHtml('No exceptions', 'All punches within policy.', 'inbox')) + '</div>';
+  } catch (e) { errorBox(host, e); }
+}
+
+// ---------- Leave (HR) ----------
+
+async function hr_leave(id){
+  const host = $('#view');
+  host.innerHTML = '<div class="view">' + pageHead('Leave', 'Leave applications and approvals.') +
+    '<div class="grid g2"><div id="hrLeaveInbox" class="card"></div><div id="hrLeaveBal" class="card"></div></div></div>';
+  try {
+    const inbox = await callApi('wf.listrequests', { mode: 'inbox' });
+    const leaveReqs = (inbox.data.rows || []).filter((r) => r.type === 'LEAVE');
+    const el = $('#hrLeaveInbox'); el.innerHTML = '<div class="card-head"><h3>Pending Leave Approvals</h3></div><div class="mt" style="padding:16px">' +
+      (leaveReqs.length ? '<table class="tbl"><thead><tr><th>Employee</th><th>From</th><th>To</th><th>Days</th><th>Action</th></tr></thead><tbody>' +
+      leaveReqs.map((r) => '<tr><td>' + esc(r.empName) + '</td><td>' + fmtDate(r.data.fromDate) + '</td><td>' + fmtDate(r.data.toDate) + '</td><td class="num">' + r.data.days + '</td><td>' +
+        '<button class="btn sm success" onclick="hrLeaveAction(\'' + r.reqId + '\', \'approve\')">' + icon('check', 14) + ' Approve</button> ' +
+        '<button class="btn sm danger" onclick="hrLeaveAction(\'' + r.reqId + '\', \'reject\')">' + icon('x', 14) + ' Reject</button>' +
+        '</td></tr>').join('') + '</tbody></table>' : emptyHtml('No pending leave', 'No leave requests awaiting approval.', 'inbox')) + '</div>';
+    // balances for self (HR can view own; simplified)
+    el.insertAdjacentHTML('afterend', '<div class="card mt"><div class="card-head"><h3>Quick: Apply Leave (self)</h3></div><div class="mt" style="padding:16px"><button class="btn" onclick="openLeaveModal()">' + icon('plus', 16) + ' Apply for my leave</button></div></div>');
+  } catch (e) { errorBox(host, e); }
+}
+async function hrLeaveAction(reqId, action){
+  const comment = action === 'reject' ? prompt('Reason for rejection:') : '';
+  if (action === 'reject' && !comment) return;
+  try { await callApi('wf.action', { token: S.token, reqId: reqId, action: action, comment: comment }); toast('Leave ' + action + 'd.', 'success'); hr_leave(); }
+  catch (e) { toast(e.message, 'error'); }
+}
+
+// ---------- Documents ----------
+
+async function hr_documents(id){
+  const host = $('#view');
+  host.innerHTML = '<div class="view">' + pageHead('Documents & Letters', 'HR letter templates and generation.') +
+    '<div class="mt"><div class="row spread" style="gap:8px"><button class="btn" id="docGen">' + icon('plus', 16) + ' Generate Letter</button></div></div>' +
+    '<div id="docList" class="mt"></div></div>';
+  $('#docGen').onclick = () => openDocGenModal();
+  mountList($('#docList'), { id: 'documents', action: 'doc.list', title: 'Issued Documents', columns: [
+    { label: 'Number', key: 'docNumber' }, { label: 'Employee', key: 'empId' }, { label: 'Status', key: 'status', render: (r) => badge(r.status) }, { label: 'Generated', key: 'generatedAt', render: (r) => fmtDate(r.generatedAt) }
+  ], params: () => ({ token: S.token }) });
+}
+function openDocGenModal(){
+  formModal({ title: 'Generate Letter', fields: [
+    { name: 'templateId', label: 'Template', type: 'select', required: true },
+    { name: 'empId', label: 'Employee ID', type: 'text', required: true },
+    { name: 'content', label: 'Custom content (optional)', type: 'textarea', rows: 4 }
+  ], onSubmit: async (data) => {
+    try { const res = await callApi('doc.generate', { token: S.token, templateId: data.templateId, empId: data.empId }); toast(res.message || 'Letter ' + (res.status === 'Final' ? 'generated.' : 'draft created — awaiting approval.'), 'success'); hr_documents(); }
+    catch (e) { toast(e.message, 'error'); }
+  }});
+}
+
+// ---------- Recruitment ----------
+
+async function hr_recruitment(id){
+  const host = $('#view');
+  host.innerHTML = '<div class="view">' + pageHead('Recruitment', 'Job openings and candidates.') +
+    '<div class="grid g2"><div id="recJobs" class="card"></div><div id="recCands" class="card"></div></div></div>';
+  try {
+    const jobs = await callApi('recruit.jobs', {});
+    const cands = await callApi('recruit.candidates', {});
+    $('#recJobs').innerHTML = '<div class="card-head"><h3>Job Openings</h3></div><div class="mt" style="padding:16px">' +
+      (jobs.data.rows || []).map((j) => '<div class="card flat mb"><div class="row spread"><div><div style="font-weight:600">' + esc(j.title) + '</div><div class="meta">' + esc(j.departmentId) + ' · ' + esc(j.branchId) + '</div></div><div>' + badge(j.status) + '</div></div><div class="meta mt-s">' + esc(j.description || '') + '</div></div>').join('') || emptyHtml('No openings', 'No job openings.', 'inbox') + '</div>';
+    $('#recCands').innerHTML = '<div class="card-head"><h3>Candidates</h3></div><div class="mt" style="padding:16px">' +
+      (cands.data.rows || []).map((c) => '<div class="card flat mb"><div class="row spread"><div><div style="font-weight:600">' + esc(c.name) + '</div><div class="meta">' + esc(c.email || '') + ' · ' + esc(c.stage || 'Applied') + '</div></div><div>' + badge(c.status) + '</div></div><div class="meta mt-s">Job: ' + esc(c.jobId) + '</div></div>').join('') || emptyHtml('No candidates', 'No candidates.', 'inbox') + '</div>';
+  } catch (e) { errorBox(host, e); }
+}
+
+// ---------- Onboarding ----------
+
+async function hr_onboarding(id){
+  const host = $('#view');
+  host.innerHTML = '<div class="view">' + pageHead('Onboarding', 'New joiner onboarding tasks.') +
+    '<div id="onList" class="mt"></div></div>';
+  try {
+    const res = await callApi('onboard.tasks', {});
+    $('#onList').innerHTML = '<table class="tbl"><thead><tr><th>Employee</th><th>Task</th><th>Owner</th><th>Due</th><th>Status</th></tr></thead><tbody>' +
+      (res.data.rows || []).map((t) => '<tr><td>' + esc(t.empId) + '</td><td>' + esc(t.task) + '</td><td>' + esc(t.owner) + '</td><td>' + fmtDate(t.dueDate) + '</td><td>' + badge(t.status) + '</td></tr>').join('') + '</tbody></table>';
+  } catch (e) { errorBox(host, e); }
+}
+
+// ---------- Performance ----------
+
+async function hr_performance(id){
+  const host = $('#view');
+  host.innerHTML = '<div class="view">' + pageHead('Performance', 'Review cycles and goals.') +
+    '<div id="perfList" class="mt"></div></div>';
+  try {
+    const res = await callApi('perf.cycles', {});
+    $('#perfList').innerHTML = '<table class="tbl"><thead><tr><th>Cycle</th><th>Start</th><th>End</th><th>Status</th></tr></thead><tbody>' +
+      (res.data.rows || []).map((c) => '<tr><td>' + esc(c.name) + '</td><td>' + fmtDate(c.startDate) + '</td><td>' + fmtDate(c.endDate) + '</td><td>' + badge(c.status) + '</td></tr>').join('') + '</tbody></table>';
+  } catch (e) { errorBox(host, e); }
+}
+
+// ---------- Exit & F&F ----------
+
+async function hr_exit(id){
+  const host = $('#view');
+  host.innerHTML = '<div class="view">' + pageHead('Exit & Full & Final', 'Resignations, clearance and F&F.') +
+    '<div id="exitList" class="mt"></div></div>';
+  try {
+    const res = await callApi('exit.list', {});
+    $('#exitList').innerHTML = '<table class="tbl"><thead><tr><th>Employee</th><th>Type</th><th>LWD</th><th>Status</th></tr></thead><tbody>' +
+      (res.data.rows || []).map((e) => '<tr><td>' + esc(e.empId) + '</td><td>' + esc(e.type) + '</td><td>' + fmtDate(e.lastWorkingDay) + '</td><td>' + badge(e.status) + '</td></tr>').join('') + '</tbody></table>';
+  } catch (e) { errorBox(host, e); }
+}
+
+// ---------- Reports (HR subset) ----------
+
+async function hr_reports(id){
+  const host = $('#view');
+  const kinds = [
+    { k: 'employee_master', l: 'Employee Master' },
+    { k: 'headcount', l: 'Headcount' },
+    { k: 'joiners_leavers', l: 'Joiners & Leavers' },
+    { k: 'attrition', l: 'Attrition' },
+    { k: 'leave_register', l: 'Leave Register' },
+    { k: 'leave_balances', l: 'Leave Balances' },
+    { k: 'daily_attendance', l: 'Daily Attendance' },
+    { k: 'attendance_summary', l: 'Attendance Summary' },
+    { k: 'exceptions', l: 'Attendance Exceptions' },
+    { k: 'audit_trail', l: 'Audit Trail' }
+  ];
+  host.innerHTML = '<div class="view">' + pageHead('Reports', 'Export CSV / Excel / Print.') +
+    '<div class="grid g3" id="repGrid"></div><div id="repArea" class="mt"></div></div>';
+  const grid = $('#repGrid');
+  kinds.forEach((k) => {
+    grid.insertAdjacentHTML('beforeend', '<div class="card click" style="cursor:pointer" onclick="hrRunReport(\'' + k.k + '\')"><div class="card-head"><h3>' + esc(k.l) + '</h3></div><div class="mt" style="padding:16px"><p class="muted">Export ' + esc(k.l) + ' report.</p><button class="btn mt">' + icon('download', 16) + ' Run</button></div></div>');
+  });
+}
+async function hrRunReport(kind){
+  const area = $('#repArea'); area.innerHTML = '<div style="padding:24px">' + spinner() + ' Loading…</div>';
+  try {
+    const res = await callApi('report.run', { token: S.token, kind: kind });
+    const rows = res.data.rows || [];
+    area.innerHTML = '<div class="card"><div class="card-head"><h3>' + esc(kind) + '</h3></div><div class="mt" style="padding:16px">' +
+      '<table class="tbl"><thead><tr>' + (rows.length ? Object.keys(rows[0]).map((c) => '<th>' + esc(c) + '</th>').join('') : '<th>No data</th>') + '</tr></thead><tbody>' +
+      rows.map((r) => '<tr>' + Object.values(r).map((v) => '<td>' + esc(v) + '</td>').join('') + '</tr>').join('') + '</tbody></table>' +
+      '<div class="mt"><button class="btn" onclick="exportReportCSV(\'' + kind + '\', ' + JSON.stringify(rows) + ')">' + icon('download', 16) + ' Export CSV</button></div>' +
+      '</div></div>';
+  } catch (e) { errorBox(area, e); }
+}
+function exportReportCSV(kind, rows){
+  if (!rows.length) { toast('No data to export.', 'warn'); return; }
+  const keys = Object.keys(rows[0]);
+  let csv = keys.join(',') + '\n';
+  rows.forEach((r) => { csv += keys.map((k) => { const v = String(r[k] || '').replace(/"/g, '""'); return '"' + v + '"'; }).join(',') + '\n'; });
+  downloadB64(kind + '_' + todayStr() + '.csv', 'text/csv', csv);
+}
+</script>
